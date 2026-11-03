@@ -378,3 +378,11 @@ test('one_sessions lists host sessions and reports storage state', async () => {
   assert.equal(result.items.length, 2)
   assert.equal(result.degraded, false)
 })
+
+test('a profile without sessionController and storageDomain still loads', async () => {
+  const { ctx, tools } = makeCtx(undefined, undefined)
+  await apply(ctx, {})
+  const result = await tools.get('one_sessions').execute({ all: true }, { signal: AbortSignal.timeout(5000) })
+  assert.equal(result.degraded, true)
+  assert.match(result.error, /sessionController is unavailable/)
+})
