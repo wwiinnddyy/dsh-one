@@ -1,0 +1,23 @@
+# dsh-one bundle patch: mounts the plugin into a DSH profile.
+#
+# Install with `dsh plugin --profile web add .` from this repository.
+- insert:
+    - id: dsh-one
+      name: '@wwiinnddyy/dsh-one'
+      config:
+        # Observe records model-initiated sends without delivering them.
+        # Set to active only after reviewing the audit trail.
+        mode: observe
+        # By default only the calling session and explicitly registered
+        # sessions are operable. Set true only on a trusted single-user host.
+        allowAllSessions: false
+        allowedSessionIds: []
+        allowedWorkspaceRoots: []
+        # Managed sessions are created when their registered id is missing.
+        allowSessionCreation: true
+        maxSendAttempts: 3
+        retryDelayMs: 1000
+        maxMessageChars: 10000
+        commandTimeoutMs: 30000
+        modelFallback: true
+        auditLimit: 1000
