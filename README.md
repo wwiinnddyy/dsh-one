@@ -164,10 +164,18 @@ directory: `assistantHomeRoot` when set, otherwise `<DSH home>/super-mind`. The
 directory is created on demand, checked against `allowedWorkspaceRoots`, and
 persisted in settings so a restart reuses it.
 
-A stored assistant session is only reopened when it still exists **and** carries
-the recorded home as its `cwd`. A session created before the home existed is
-rebuilt on the next open, so an upgraded install never lands on a Workspace
-prompt.
+A stored assistant session is only reopened when it still exists **and** both the
+persisted record and the Host's own listing point at the home we would create
+today, compared as paths rather than as raw strings. A session created before the
+home existed carries some other `cwd` (often the profile directory), and
+comparing that against the Host's own value accepted it, so the entry reopened a
+stale blank conversation. Such a session is now rebuilt on the next open, which
+means an upgraded install repairs itself.
+
+A newly created assistant session is seeded with one assistant turn, so opening
+the entry shows a conversation that has already introduced itself rather than an
+empty box indistinguishable from a new chat. The greeting is best-effort: a Host
+that refuses the prompt must not stop the entry from opening.
 
 ### Cross-Workspace command
 
