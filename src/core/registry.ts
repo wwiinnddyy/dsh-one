@@ -785,6 +785,48 @@ export class OneCore {
     }
   }
 
+  /**
+   * Whether the host still lists one ordinary session. Used before returning a
+   * stored assistant session id, because opening an id the host dropped shows an
+   * empty conversation instead of failing loudly.
+   */
+  async sessionExists(sessionId: string): Promise<boolean> {
+    const controller = this.requireController()
+    const listed = await controller.list({}, this.timedSignal())
+    const summary = listed.items.find(item => item.sessionId === sessionId)
+    return summary !== undefined && !this.isSubagent(summary)
+  }
+
+  /**
+   * Create the assistant's own session.
+   *
+   * The assistant is an ordinary DSH session, not a private chat surface: it is
+   * created through the same controller every other session uses, so the
+   * conversation, history, model selection, and tool access all behave normally.
+   * The host assigns the id; the title is only a label for the session list.
+   */
+  async createAssistantSession(title: string): Promise<{ readonly sessionId: string }> {
+    const controller = this.requireController()
+    const created = await controller.create({})
+    const at = this.now()
+    await this.store.putSession({
+      sessionId: created.sessionId,
+      title,
+      status: 'active',
+      trusted: true,
+      createdAt: at,
+      updatedAt: at,
+      lastSeenAt: at,
+    })
+    await this.audit({
+      action: 'assistant-session-created',
+      targetSessionId: created.sessionId,
+      outcome: 'ok',
+      detail: title,
+    })
+    return { sessionId: created.sessionId }
+  }
+
   /** Append one audit row. Shared by the core, task, and intake modules. */
   async audit(input: {
     action: string

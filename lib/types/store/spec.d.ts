@@ -359,8 +359,8 @@ export declare const triggerSchema: z.ZodObject<{
     gateReason: z.ZodOptional<z.ZodString>;
     evalId: z.ZodOptional<z.ZodString>;
     decision: z.ZodOptional<z.ZodEnum<{
-        accept: "accept";
         "would-accept": "would-accept";
+        accept: "accept";
         decline: "decline";
         "observe-only": "observe-only";
         "no-delegate": "no-delegate";
@@ -411,8 +411,8 @@ export declare const evalSchema: z.ZodObject<{
         note: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>>;
     outcome: z.ZodOptional<z.ZodEnum<{
-        accept: "accept";
         "would-accept": "would-accept";
+        accept: "accept";
         decline: "decline";
     }>>;
     reason: z.ZodOptional<z.ZodString>;
@@ -427,8 +427,8 @@ export declare const decisionSchema: z.ZodObject<{
     threadId: z.ZodString;
     triggerId: z.ZodString;
     outcome: z.ZodEnum<{
-        accept: "accept";
         "would-accept": "would-accept";
+        accept: "accept";
         decline: "decline";
         "observe-only": "observe-only";
         "no-delegate": "no-delegate";
@@ -515,8 +515,8 @@ export declare const subscriptionSchema: z.ZodObject<{
     threadId: z.ZodString;
     sourceId: z.ZodString;
     mode: z.ZodEnum<{
-        reply: "reply";
         none: "none";
+        reply: "reply";
     }>;
     createdAt: z.ZodNumber;
 }, z.core.$strip>;
@@ -688,7 +688,7 @@ export declare const oneDomainSpec: {
             gate: "pass" | "reject" | "ignore";
             gateReason?: string | undefined;
             evalId?: string | undefined;
-            decision?: "accept" | "would-accept" | "decline" | "observe-only" | "no-delegate" | undefined;
+            decision?: "would-accept" | "accept" | "decline" | "observe-only" | "no-delegate" | undefined;
             taskId?: string | undefined;
             payload?: string | undefined;
         }>;
@@ -724,7 +724,7 @@ export declare const oneDomainSpec: {
                 pass: boolean;
                 note?: string | undefined;
             }[] | undefined;
-            outcome?: "accept" | "would-accept" | "decline" | undefined;
+            outcome?: "would-accept" | "accept" | "decline" | undefined;
             reason?: string | undefined;
             payload?: string | undefined;
             settledAt?: number | undefined;
@@ -734,7 +734,7 @@ export declare const oneDomainSpec: {
             evalId: string;
             threadId: string;
             triggerId: string;
-            outcome: "accept" | "would-accept" | "decline" | "observe-only" | "no-delegate";
+            outcome: "would-accept" | "accept" | "decline" | "observe-only" | "no-delegate";
             reasons: string[];
             policyVersion: string;
             createdAt: number;
@@ -792,7 +792,7 @@ export declare const oneDomainSpec: {
             taskId: string;
             threadId: string;
             sourceId: string;
-            mode: "reply" | "none";
+            mode: "none" | "reply";
             createdAt: number;
         }>;
         settings: DomainTableSpec<{

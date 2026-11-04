@@ -31,7 +31,7 @@ The plugin imports no DSH package at runtime. Host services are reached through 
 | `dsh-one` | `@wwiinnddyy/dsh-one` | registry, outbox, audit, `/one`, `one_sessions`/`one_send`/`one_model`, panel API | on |
 | `dsh-one-delegate` | `@wwiinnddyy/dsh-one/delegate` | task state machine, worker sessions, leases, slots, budgets, report tools | on, `taskMode: observe` |
 | `dsh-one-ingress` | `@wwiinnddyy/dsh-one/ingress` | GitHub webhook/poll, trigger/thread/eval/policy/mandate | **disabled** |
-| client half | `@wwiinnddyy/dsh-one/client` | floating panel in the Web shell (`shell.overlay`) | web profiles only |
+| client half | `@wwiinnddyy/dsh-one/client` | assistant entry above the workspace list plus its own Settings tab | web profiles only |
 
 Each row has its own `Config` and its own `inject` list. The profile row's `disabled` flag is the only enable switch; there is no second `enabled` key inside a row. Ingress is disabled because it has no safe default: repository, actor, mention, and secret must be configured first.
 
@@ -97,11 +97,11 @@ package id stays `@wwiinnddyy/dsh-one`; only the label the user sees changes.
   the row default from then on.
 - `/one name` prints the effective name and its reset target, `/one name <text>`
   sets it, and `/one name reset` restores the row default.
-- In the Web shell, **Settings → General → 助手名称** shows the same value with
-  Save and Reset actions. It writes `PUT /one/api/settings` and
-  `DELETE /one/api/settings`.
-- Every surface reads the resolved name: the floating panel title and pill, the
-  DSH Go panel title and composer strip, and `/one/api/overview`.
+- In the Web shell the name is edited on the plugin's own **Settings → 助手**
+  tab, which writes `PUT /one/api/settings` and `DELETE /one/api/settings`.
+- Every surface reads the resolved name: the sidebar assistant entry, the
+  Settings tab, the DSH Go panel title and composer strip, and
+  `/one/api/overview`.
 
 Names are trimmed, may not contain control characters, and are limited to 24
 code points. An invalid name is rejected and the stored value is left alone.
@@ -244,14 +244,29 @@ The webhook route is registered through `ctx.webServer.register` at `webhookPath
 
 ### Web
 
-`/one/api/overview`, `/one/api/tasks`, and `/one/api/decisions` are read-only and call the module read services; they never open `storageDomain` themselves. `/one/api/settings` is the one write endpoint: `GET` reads the name, `PUT` persists one, and `DELETE` restores the row default. It sits behind the same `connection.requestRejection` fence as the read routes, because it writes user state. The overview order is:
+`/one/api/overview`, `/one/api/tasks`, and `/one/api/decisions` are read-only and call the module read services; they never open `storageDomain` themselves. `/one/api/settings` is the one settings write endpoint: `GET` reads the name, `PUT` persists one, and `DELETE` restores the row default. It sits behind the same `connection.requestRejection` fence as the read routes, because it writes user state. The overview order is:
 
 1. attention (needs a person);
 2. running;
 3. history;
 4. health.
 
-The client half registers a floating panel in `shell.overlay` and reads only `/one/api/overview`. It also registers one owner-declared row in `settings.general.item` (id `dsh-one-name`), which draws its own label, current value, and write path because the settings shell projects no props into a General row. It does not import host implementation code. `dsh.client.inject` is informational; the slot declaration remains the real load gate.
+`/one/api/assistant` backs the assistant entry. `GET` reports the stored session id without creating anything, `POST` resolves the assistant's session and creates it on first use, and `DELETE` forgets it so the next open starts a fresh conversation. A stored id the host no longer lists is replaced rather than returned, because opening a dropped id would render an empty conversation instead of failing visibly. It is fenced like the write routes.
+
+The client half registers two seats and draws no chat surface of its own:
+
+- `sidebar.panellist` — the assistant entry, ordered `-100` so it sorts above the
+  shipped Plugins and Schedules icons, i.e. above the workspace list. DSH owns the
+  row's click and reduces it to `layout.selectPanel(id)`.
+- `main` (keyed by `dsh-one-assistant`) — the paired central panel. It resolves
+  the assistant's real session and calls `uiWorkspace.openSession(sessionId)`,
+  which navigates to the ordinary conversation and clears the panel selection.
+  The panel body is therefore only the momentary "opening" state; the user lands
+  on a normal DSH chat whose conversation DSH renders itself.
+- `settings.section` (id `dsh-one`) — the plugin's own Settings tab, which owns
+  its label, unlike a `settings.general.item` row whose label is unused.
+
+It does not import host implementation code. `dsh.client.inject` is informational; the slot declaration remains the real load gate.
 
 ### DSH Go
 
@@ -395,6 +410,6 @@ Task dispatch and intake acceptance were exercised only with fakes. A real model
 - **At-least-once, never exactly-once.** Webhook delivery dedupe, deterministic ids, and startup reconciliation reduce duplicates; they cannot make an external side effect transactional with the local store.
 - **Assessment quality depends on the configured model.** Deterministic `denyPattern` rules are a safe fallback, not a semantic classifier.
 - **Polling covers issue comments only.** It is a backstop for missed webhooks, not a full event mirror.
-- **The panel needs the Web shell's `shell.overlay` slot.** A profile without `dsh-client-ui-layout` loads the host half but not the client panel.
+- **The assistant needs the Web shell's sidebar and settings slots.** A profile without `dsh-client-ui-sidebar` / `dsh-client-ui-layout` loads the host half but draws neither the entry nor the tab.
 - **The webhook route is authenticated by HMAC by default.** `requireHostAuth` is for deployments behind a proxy that adds the host credential; GitHub itself cannot.
 - **Worker tool restriction can be partial.** `tools.restrict` rejects a whole list when one name belongs to the worker's own scope; the runtime retries individual denies and records a partial result.

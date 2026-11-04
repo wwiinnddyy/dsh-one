@@ -43,6 +43,13 @@ export function registerPanelApi(
         await handleSettingsRoute(ctx, settings, req, res)
       }),
     }),
+    server.register({
+      kind: 'exact',
+      path: '/one/api/assistant',
+      handler: wrap(ctx, async (req, res) => {
+        await handleAssistantRoute(ctx, core, settings, req, res)
+      }),
+    }),
   ]
   return () => {
     for (const dispose of disposers.reverse()) dispose()
@@ -144,7 +151,56 @@ function settingsPayload(settings: SettingsService): Record<string, unknown> {
     displayName: settings.displayName(),
     defaultDisplayName: settings.defaultDisplayName(),
     overridden: settings.hasOverride(),
+    sessionId: settings.assistantSessionId() ?? null,
   }
+}
+
+/**
+ * The assistant entry's backend.
+ *
+ * `GET` reports the assistant's session without creating anything. `POST`
+ * creates the session when it is missing and returns its id, so the client can
+ * open a real conversation with `uiWorkspace.openSession()`. A stored id that
+ * the host no longer lists is replaced rather than returned, because a stale id
+ * would open an empty or failing conversation.
+ */
+async function handleAssistantRoute(
+  ctx: DshContextLike,
+  core: OneCore,
+  settings: SettingsService,
+  req: HttpRequestLike,
+  res: HttpResponseLike,
+): Promise<void> {
+  void ctx
+  const method = (req.method ?? 'GET').toUpperCase()
+  if (method === 'GET') {
+    jsonResponse(res, 200, {
+      displayName: settings.displayName(),
+      sessionId: settings.assistantSessionId() ?? null,
+    })
+    return
+  }
+  if (method === 'DELETE') {
+    await settings.clearAssistantSessionId()
+    jsonResponse(res, 200, { sessionId: null })
+    return
+  }
+  if (method !== 'POST' && method !== 'PUT') {
+    jsonResponse(res, 405, { error: 'method not allowed' })
+    return
+  }
+
+  const stored = settings.assistantSessionId()
+  if (stored !== undefined) {
+    const live = await core.sessionExists(stored)
+    if (live) {
+      jsonResponse(res, 200, { sessionId: stored, created: false })
+      return
+    }
+  }
+  const created = await core.createAssistantSession(settings.displayName())
+  await settings.setAssistantSessionId(created.sessionId, 'system')
+  jsonResponse(res, 200, { sessionId: created.sessionId, created: true })
 }
 
 /** Build the same overview the HTTP route serves; the DSH Go panel reads it directly. */

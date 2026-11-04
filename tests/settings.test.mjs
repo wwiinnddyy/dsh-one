@@ -197,3 +197,100 @@ test('adding the settings table does not require a domain version bump', async (
   }
 })
 
+test('the assistant route reports no session before one is created', async () => {
+  const env = await createEnv({ delegate: false, sessions })
+  try {
+    const read = await env.webServer.request('/one/api/assistant', makeReq())
+    assert.equal(read.status, 200)
+    assert.equal(read.json().sessionId, null)
+    assert.equal(read.json().displayName, '鲸宝')
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('the assistant route creates one real session and reuses it', async () => {
+  const env = await createEnv({ delegate: false, sessions })
+  try {
+    const first = await env.webServer.request('/one/api/assistant', makeReq({ method: 'POST' }))
+    assert.equal(first.status, 200)
+    const sessionId = first.json().sessionId
+    assert.equal(typeof sessionId, 'string')
+    assert.ok(sessionId.length > 0)
+    assert.equal(first.json().created, true)
+
+    // The id is durable, so the entry reopens the same conversation.
+    assert.equal(env.services.get('oneSettings').assistantSessionId(), sessionId)
+
+    // A second press must not spawn a parallel assistant conversation.
+    const second = await env.webServer.request('/one/api/assistant', makeReq({ method: 'POST' }))
+    assert.equal(second.status, 200)
+    assert.equal(second.json().sessionId, sessionId)
+    assert.equal(second.json().created, false)
+
+    const read = await env.webServer.request('/one/api/assistant', makeReq())
+    assert.equal(read.json().sessionId, sessionId)
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('a stored assistant session the host dropped is replaced, not returned', async () => {
+  const env = await createEnv({ delegate: false, sessions })
+  try {
+    // Seed an id that no listing contains, as an archive or workspace reset would.
+    await env.services.get('oneSettings').setAssistantSessionId('gone-forever', 'system')
+    const response = await env.webServer.request('/one/api/assistant', makeReq({ method: 'POST' }))
+    assert.equal(response.status, 200)
+    assert.notEqual(response.json().sessionId, 'gone-forever')
+    assert.equal(response.json().created, true)
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('the assistant session can be cleared for a fresh conversation', async () => {
+  const env = await createEnv({ delegate: false, sessions })
+  try {
+    const created = await env.webServer.request('/one/api/assistant', makeReq({ method: 'POST' }))
+    assert.ok(created.json().sessionId)
+
+    const cleared = await env.webServer.request('/one/api/assistant', makeReq({ method: 'DELETE' }))
+    assert.equal(cleared.status, 200)
+    assert.equal(cleared.json().sessionId, null)
+    assert.equal(env.services.get('oneSettings').assistantSessionId(), undefined)
+
+    const method = await env.webServer.request('/one/api/assistant', makeReq({ method: 'PATCH' }))
+    assert.equal(method.status, 405)
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('the assistant route stays behind the authentication fence', async () => {
+  const { makeConnection } = await import('./harness.mjs')
+  const env = await createEnv({ delegate: false, sessions, connection: makeConnection(401) })
+  try {
+    const denied = await env.webServer.request('/one/api/assistant', makeReq({ method: 'POST' }))
+    assert.equal(denied.status, 401)
+    // A rejected caller must not have created a session as a side effect.
+    assert.equal(env.services.get('oneSettings').assistantSessionId(), undefined)
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('the settings payload reports the assistant session for the settings tab', async () => {
+  const env = await createEnv({ delegate: false, sessions })
+  try {
+    const before = await env.webServer.request('/one/api/settings', makeReq())
+    assert.equal(before.json().sessionId, null)
+
+    await env.webServer.request('/one/api/assistant', makeReq({ method: 'POST' }))
+    const after = await env.webServer.request('/one/api/settings', makeReq())
+    assert.equal(typeof after.json().sessionId, 'string')
+  } finally {
+    await env.dispose()
+  }
+})
+

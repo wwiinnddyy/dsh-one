@@ -1,5 +1,17 @@
 /**
- * Browser side of dsh-one: one floating panel that reads `/one/api/overview`.
+ * Browser side of dsh-one.
+ *
+ * The assistant is a real conversation, not a floating widget. This half
+ * contributes exactly two seats and no custom chat surface:
+ *
+ * 1. `sidebar.panellist` — an entry that sits above the workspace list, in the
+ *    same list as the shipped Plugins / Schedules icons. DSH owns the row's
+ *    click, and it does one thing: `layout.selectPanel(id)`. The matching
+ *    `main` panel therefore follows the click and immediately hands control to
+ *    the assistant's real DSH session, whose conversation DSH renders itself.
+ * 2. `settings.section` — this plugin's own Settings tab, instead of a row
+ *    inside somebody else's General page.
+ *
  * Written against the DSH client module closure-factory protocol; React is
  * resolved through the platform module table.
  */
@@ -11,8 +23,9 @@ interface ReactElementLike {
 
 interface ReactLike {
   createElement(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): ReactElementLike
-  useState<T>(initial: T): [T, (next: T) => void]
+  useState<T>(initial: T | (() => T)): [T, (next: T | ((prev: T) => T)) => void]
   useEffect(run: () => void | (() => void), deps?: readonly unknown[]): void
+  useRef<T>(initial: T): { current: T }
 }
 
 interface SlotRegistryLike {
@@ -20,36 +33,40 @@ interface SlotRegistryLike {
   register(options: Record<string, unknown>, component: unknown): () => void
 }
 
+interface LayoutLike {
+  selectPanel?(id: string | null): void
+}
+
+interface UiWorkspaceLike {
+  openSession(target: string): void
+}
+
 interface ClientContextLike {
   readonly slots?: SlotRegistryLike
+  get?(name: string): unknown
   effect?(callback: () => (() => void) | void, label?: string): unknown
 }
 
-interface OverviewItem {
-  readonly id: string
-  readonly title: string
-  readonly status: string
-  readonly detail?: string
-  readonly updatedAt: number
-}
-
-interface Overview {
+interface SettingsView {
   readonly displayName: string
   readonly defaultDisplayName: string
-  readonly attention: readonly OverviewItem[]
-  readonly running: readonly OverviewItem[]
-  readonly history: readonly OverviewItem[]
-  readonly health: {
-    readonly storage: string
-    readonly core: string
-    readonly delegate: string
-    readonly ingress: string
-    readonly policyVersion?: string
-    readonly leases: number
-    readonly workers: number
-    readonly maxWorkers: number
-    readonly lastError?: string
-  }
+  readonly overridden: boolean
+  readonly sessionId: string | null
+}
+
+interface AssistantView {
+  readonly sessionId: string | null
+}
+
+interface ResponseLike {
+  readonly ok: boolean
+  readonly status: number
+  json(): Promise<unknown>
+}
+
+interface StyleTagLike {
+  readonly dataset: Record<string, string>
+  textContent: string
 }
 
 declare const window: {
@@ -58,112 +75,142 @@ declare const window: {
   }
 }
 
-interface StyleTagLike {
-  readonly dataset: Record<string, string>
-  textContent: string
-}
+declare const fetch: (input: string, init?: Record<string, unknown>) => Promise<ResponseLike>
 
-interface DocumentLike {
+declare const document: {
   querySelector(selector: string): unknown
   createElement(tag: string): StyleTagLike
   readonly head: { appendChild(node: unknown): void }
 }
 
-declare const document: DocumentLike
+const NAME_FALLBACK = '鲸宝'
+const PANEL_ID = 'dsh-one-assistant'
+const STYLE_ID = 'dsh-one-css'
+const NAME_MAX_CHARS = 24
+
+function ensureStyle(): void {
+  if (typeof document === 'undefined') return
+  if (document.querySelector(`style[data-one-css="${STYLE_ID}"]`) !== null) return
+  const style = document.createElement('style')
+  style.dataset.oneCss = STYLE_ID
+  style.textContent = [
+    '.one-page{display:flex;flex-direction:column;gap:20px;max-width:560px;padding:8px 0}',
+    '.one-page h3{margin:0;font-size:14px;line-height:20px}',
+    '.one-page p{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+    '.one-field{display:flex;flex-direction:column;gap:8px}',
+    '.one-field>label{font-size:13px;font-weight:600}',
+    '.one-row{display:flex;align-items:center;gap:8px}',
+    '.one-input{flex:1;min-width:0;padding:6px 10px;border-radius:8px;font:inherit;color:inherit;',
+    'border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base,transparent)}',
+    '.one-button{padding:6px 12px;border-radius:8px;font:inherit;color:inherit;cursor:pointer;',
+    'border:.5px solid var(--dsw-alias-border-l1);background:transparent}',
+    '.one-button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-1)}',
+    '.one-button:disabled{opacity:.5;cursor:default}',
+    '.one-error{color:var(--dsw-alias-state-error-primary);font-size:12px}',
+    '.one-hint{color:var(--dsw-alias-label-secondary);font-size:12px}',
+  ].join('')
+  document.head.appendChild(style)
+}
+
+async function jsonFetch(url: string, init?: Record<string, unknown>): Promise<unknown> {
+  const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...(init ?? {}) })
+  const value = await response.json()
+  if (!response.ok) {
+    const carried = typeof value === 'object' && value !== null
+      ? (value as { error?: unknown }).error
+      : undefined
+    throw new Error(typeof carried === 'string' ? carried : `HTTP ${response.status}`)
+  }
+  return value
+}
+
+const readSettings = async (): Promise<SettingsView> => await jsonFetch('/one/api/settings') as SettingsView
+
+/**
+ * Resolve the assistant's own session, creating it on first use. The host owns
+ * the id, so the conversation is a normal DSH session from the very first turn.
+ */
+async function ensureAssistant(): Promise<string> {
+  const value = await jsonFetch('/one/api/assistant', { method: 'POST' }) as AssistantView
+  if (typeof value.sessionId !== 'string' || value.sessionId === '') {
+    throw new Error('助手会话没有返回会话 id')
+  }
+  return value.sessionId
+}
 
 window.__ModuleLoader__.load({
   id: '@wwiinnddyy/dsh-one',
   factory(require) {
     const React = require('react') as ReactLike
 
-    function ensureStyle(): void {
-      const id = 'dsh-one-panel-css'
-      if (typeof document === 'undefined' || document.querySelector(`style[data-one-css="${id}"]`) !== null) return
-      const style = document.createElement('style')
-      style.dataset.oneCss = id
-      style.textContent = [
-        '.one-pill{position:fixed;right:16px;bottom:16px;z-index:2147483000;border:1px solid var(--dsh-border,#8884);',
-        'background:var(--dsh-bg,#111);color:inherit;border-radius:10px;padding:8px 12px;font:600 12px/1.2 system-ui;',
-        'cursor:pointer;box-shadow:0 6px 24px #0004}',
-        '.one-panel{position:fixed;right:16px;bottom:60px;z-index:2147483000;width:min(420px,calc(100vw - 32px));',
-        'max-height:min(70vh,560px);overflow:auto;border:1px solid var(--dsh-border,#8884);border-radius:12px;',
-        'background:var(--dsh-bg,#111);color:inherit;font:13px/1.45 system-ui;box-shadow:0 12px 40px #0006}',
-        '.one-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--dsh-border,#8884)}',
-        '.one-head h3{margin:0;font-size:13px}',
-        '.one-body{padding:10px 12px}',
-        '.one-sec{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;margin:10px 0 6px}',
-        '.one-row{display:flex;gap:8px;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--dsh-border,#8882)}',
-        '.one-row:last-child{border-bottom:0}',
-        '.one-row b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-        '.one-row span{opacity:.7;white-space:nowrap}',
-        '.one-health{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px;opacity:.8}',
-        '.one-empty{opacity:.7;padding:8px 0}',
-        '.one-err{color:#e66;padding:8px 0}',
-        '.one-set{display:flex;flex-direction:column;gap:8px;padding:2px 0}',
-        '.one-set label{font-weight:600}',
-        '.one-set p{margin:0;font-size:12px;opacity:.7}',
-        '.one-set-row{display:flex;gap:8px;align-items:center}',
-        '.one-set input{flex:1;min-width:0;padding:6px 8px;border-radius:8px;',
-        'border:1px solid var(--dsh-border,#8884);background:var(--dsh-bg,#111);color:inherit;font:inherit}',
-        '.one-set button{padding:6px 10px;border-radius:8px;border:1px solid var(--dsh-border,#8884);',
-        'background:transparent;color:inherit;font:inherit;cursor:pointer}',
-        '.one-set button:disabled{opacity:.5;cursor:default}',
-      ].join('')
-      document.head.appendChild(style)
-    }
-
-    function itemRow(item: OverviewItem): ReactElementLike {
-      return React.createElement('div', { key: item.id, className: 'one-row' }, [
-        React.createElement('b', { key: 't', title: item.detail ?? item.title }, item.title),
-        React.createElement('span', { key: 's' }, item.status),
-      ])
-    }
-
-    function section(title: string, items: readonly OverviewItem[]): ReactElementLike {
-      return React.createElement('div', { key: title }, [
-        React.createElement('div', { key: 'h', className: 'one-sec' }, `${title} · ${items.length}`),
-        ...(items.length === 0
-          ? [React.createElement('div', { key: 'e', className: 'one-empty' }, 'None')]
-          : items.slice(0, 12).map(itemRow)),
-      ])
-    }
-
-    interface SettingsView {
-      readonly displayName: string
-      readonly defaultDisplayName: string
-      readonly overridden: boolean
-    }
-
-    /** One-shot settings read; the settings row owns its own refresh. */
-    async function readSettings(): Promise<SettingsView> {
-      const response = await fetch('/one/api/settings', { credentials: 'same-origin', cache: 'no-store' })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      return await response.json() as SettingsView
-    }
-
-    async function writeSettings(method: 'PUT' | 'DELETE', displayName?: string): Promise<SettingsView> {
-      const response = await fetch('/one/api/settings', {
-        method,
-        credentials: 'same-origin',
-        cache: 'no-store',
-        ...(method === 'PUT'
-          ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ displayName }) }
-          : {}),
-      })
-      const value = await response.json() as SettingsView & { error?: string }
-      if (!response.ok) throw new Error(value.error ?? `HTTP ${response.status}`)
-      return value
+    /** The chat glyph, inline so the entry needs no asset pipeline. */
+    function glyph(size: number): ReactElementLike {
+      return React.createElement('svg', {
+        width: size,
+        height: size,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        'aria-hidden': 'true',
+      }, React.createElement('path', {
+        d: 'M2.6 4.1c0-.8.7-1.5 1.5-1.5h7.8c.8 0 1.5.7 1.5 1.5v4.6c0 .8-.7 1.5-1.5 1.5H6.9L3.6 12.9c-.4.3-1 0-1-.5V4.1Z',
+        stroke: 'currentColor',
+        'stroke-width': '1.2',
+        'stroke-linejoin': 'round',
+      }))
     }
 
     /**
-     * The General-settings row. The row owns its copy, current value, and write
-     * path, because the settings shell projects no props into it.
+     * The `main` panel paired with the sidebar entry.
+     *
+     * DSH shows this panel the moment the sidebar row is clicked, and this
+     * component immediately replaces it: it resolves the assistant's session and
+     * calls `openSession`, which navigates to the ordinary conversation view and
+     * clears the panel selection. So the body below is only ever the brief
+     * "opening" state; the user lands on a real chat.
      */
-    function NameRow(): ReactElementLike {
+    function AssistantPanel(props: { readonly ctxRef: ClientContextLike }): ReactElementLike {
+      const [error, setError] = React.useState<string | undefined>(undefined)
+      const started = React.useRef(false)
+      React.useEffect(() => {
+        if (started.current) return
+        started.current = true
+        const uiWorkspace = props.ctxRef.get?.('uiWorkspace') as UiWorkspaceLike | undefined
+        if (uiWorkspace === undefined) {
+          setError('当前环境没有会话导航服务')
+          return
+        }
+        let cancelled = false
+        void (async () => {
+          try {
+            const sessionId = await ensureAssistant()
+            if (cancelled) return
+            uiWorkspace.openSession(sessionId)
+          } catch (openError: unknown) {
+            if (!cancelled) setError(String(openError))
+          }
+        })()
+        return () => { cancelled = true }
+      }, [])
+      if (error !== undefined) {
+        return React.createElement('div', { className: 'one-page' }, [
+          React.createElement('h3', { key: 't' }, '无法打开助手会话'),
+          React.createElement('div', { key: 'e', className: 'one-error' }, error),
+          React.createElement('p', { key: 'h' }, '可以在「设置 → 助手」里查看状态，或检查插件是否正常加载。'),
+        ])
+      }
+      return React.createElement('div', { className: 'one-page' }, [
+        React.createElement('p', { key: 'p' }, '正在打开助手会话…'),
+      ])
+    }
+
+    /** This plugin's own Settings tab. */
+    function SettingsSection(): ReactElementLike {
       const [view, setView] = React.useState<SettingsView | undefined>(undefined)
       const [draft, setDraft] = React.useState('')
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState<string | undefined>(undefined)
+      const [notice, setNotice] = React.useState<string | undefined>(undefined)
+
       React.useEffect(() => {
         let alive = true
         void readSettings().then(value => {
@@ -175,156 +222,158 @@ window.__ModuleLoader__.load({
         })
         return () => { alive = false }
       }, [])
+
       const apply = (next: SettingsView): void => {
         setView(next)
         setDraft(next.displayName)
         setError(undefined)
       }
+
       const save = async (): Promise<void> => {
         setBusy(true)
+        setNotice(undefined)
         try {
-          apply(await writeSettings('PUT', draft))
+          apply(await jsonFetch('/one/api/settings', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ displayName: draft }),
+          }) as SettingsView)
+          setNotice('已保存')
         } catch (saveError: unknown) {
           setError(String(saveError))
         } finally {
           setBusy(false)
         }
       }
+
       const reset = async (): Promise<void> => {
         setBusy(true)
+        setNotice(undefined)
         try {
-          apply(await writeSettings('DELETE'))
+          apply(await jsonFetch('/one/api/settings', { method: 'DELETE' }) as SettingsView)
+          setNotice('已恢复默认名称')
         } catch (resetError: unknown) {
           setError(String(resetError))
         } finally {
           setBusy(false)
         }
       }
-      const unchanged = view !== undefined && draft.trim() === view.displayName
-      return React.createElement('div', { className: 'one-set' }, [
-        React.createElement('label', { key: 'l', htmlFor: 'dsh-one-name-input' }, '助手名称'),
-        React.createElement('p', { key: 'd' },
-          view === undefined
-            ? '读取中…'
-            : `显示在面板、命令和 DSH Go 上。默认：${view.defaultDisplayName}${view.overridden ? '（已自定义）' : ''}`),
-        React.createElement('div', { key: 'r', className: 'one-set-row' }, [
-          React.createElement('input', {
-            key: 'i',
-            id: 'dsh-one-name-input',
-            value: draft,
-            maxLength: 24,
-            placeholder: view?.defaultDisplayName ?? '',
-            disabled: busy,
-            onChange: (event: { target?: { value?: string } }) => setDraft(event.target?.value ?? ''),
-            onKeyDown: (event: { key?: string }) => {
-              if (event.key === 'Enter' && !unchanged && draft.trim() !== '') void save()
-            },
-          }),
-          React.createElement('button', {
-            key: 's',
-            type: 'button',
-            disabled: busy || unchanged || draft.trim() === '',
-            onClick: () => { void save() },
-          }, '保存'),
-          React.createElement('button', {
-            key: 'x',
-            type: 'button',
-            disabled: busy || view?.overridden !== true,
-            onClick: () => { void reset() },
-          }, '恢复默认'),
-        ]),
-        ...(error === undefined ? [] : [React.createElement('div', { key: 'e', className: 'one-err' }, error)]),
-      ])
-    }
 
-    function OnePanel(): ReactElementLike {
-      const [open, setOpen] = React.useState(false)
-      const [data, setData] = React.useState<Overview | undefined>(undefined)
-      const [error, setError] = React.useState<string | undefined>(undefined)
-      React.useEffect(() => {
-        let alive = true
-        const load = async (): Promise<void> => {
-          try {
-            const response = await fetch('/one/api/overview', { credentials: 'same-origin', cache: 'no-store' })
-            if (!response.ok) throw new Error(`HTTP ${response.status}`)
-            const value = await response.json() as Overview
-            if (alive) {
-              setData(value)
-              setError(undefined)
-            }
-          } catch (loadError) {
-            if (alive) setError(String(loadError))
-          }
-        }
-        void load()
-        const timer = setInterval(() => { void load() }, 3000)
-        return () => {
-          alive = false
-          clearInterval(timer)
-        }
-      }, [])
-      const attention = data?.attention.length ?? 0
-      const running = data?.running.length ?? 0
-      const name = data?.displayName ?? 'One'
-      const pill = React.createElement('button', {
-        key: 'pill',
-        className: 'one-pill',
-        onClick: () => setOpen(!open),
-        title: name,
-      }, `${name} ${attention}/${running}`)
-      if (!open) return pill
-      const body = React.createElement('div', { key: 'body', className: 'one-body' }, [
-        ...(error === undefined ? [] : [React.createElement('div', { key: 'err', className: 'one-err' }, error)]),
-        section('Needs attention', data?.attention ?? []),
-        section('Running', data?.running ?? []),
-        section('History', data?.history ?? []),
-        ...(data === undefined ? [] : [
-          React.createElement('div', { key: 'health', className: 'one-sec' }, 'Health'),
-          React.createElement('div', { key: 'h2', className: 'one-health' }, [
-            React.createElement('div', { key: 's' }, `storage ${data.health.storage}`),
-            React.createElement('div', { key: 'c' }, `core ${data.health.core}`),
-            React.createElement('div', { key: 'd' }, `delegate ${data.health.delegate}`),
-            React.createElement('div', { key: 'i' }, `ingress ${data.health.ingress}`),
-            React.createElement('div', { key: 'w' }, `workers ${data.health.workers}/${data.health.maxWorkers}`),
-            React.createElement('div', { key: 'l' }, `leases ${data.health.leases}`),
-            React.createElement('div', { key: 'p' }, `policy ${data.health.policyVersion ?? '—'}`),
-            React.createElement('div', { key: 'e' }, data.health.lastError ?? 'no error'),
+      const unchanged = view !== undefined && draft.trim() === view.displayName
+      const fallback = view?.defaultDisplayName ?? NAME_FALLBACK
+      const hasSession = typeof view?.sessionId === 'string' && view.sessionId !== ''
+
+      return React.createElement('div', { className: 'one-page' }, [
+        React.createElement('div', { key: 'name', className: 'one-field' }, [
+          React.createElement('label', { key: 'l', htmlFor: 'dsh-one-name' }, '名字'),
+          React.createElement('p', { key: 'd' },
+            `显示在左侧入口上。默认：${fallback}${view?.overridden === true ? '（当前为自定义）' : ''}`),
+          React.createElement('div', { key: 'r', className: 'one-row' }, [
+            React.createElement('input', {
+              key: 'i',
+              id: 'dsh-one-name',
+              className: 'one-input',
+              value: draft,
+              maxLength: NAME_MAX_CHARS,
+              placeholder: fallback,
+              disabled: busy || view === undefined,
+              onChange: (event: { target?: { value?: string } }) => {
+                setDraft(event.target?.value ?? '')
+                setNotice(undefined)
+              },
+              onKeyDown: (event: { key?: string }) => {
+                if (event.key === 'Enter' && !unchanged && draft.trim() !== '') void save()
+              },
+            }),
+            React.createElement('button', {
+              key: 's',
+              type: 'button',
+              className: 'one-button',
+              disabled: busy || unchanged || draft.trim() === '',
+              onClick: () => { void save() },
+            }, busy ? '保存中…' : '保存'),
+            React.createElement('button', {
+              key: 'x',
+              type: 'button',
+              className: 'one-button',
+              disabled: busy || view?.overridden !== true,
+              onClick: () => { void reset() },
+            }, '恢复默认'),
           ]),
         ]),
-      ])
-      return React.createElement('div', { key: 'panel', className: 'one-panel' }, [
-        React.createElement('div', { key: 'head', className: 'one-head' }, [
-          React.createElement('h3', { key: 't' }, name),
-          React.createElement('button', { key: 'c', onClick: () => setOpen(false) }, 'Close'),
+        React.createElement('div', { key: 'sess', className: 'one-field' }, [
+          React.createElement('label', { key: 'l' }, '助手会话'),
+          React.createElement('p', { key: 'd' },
+            '助手运行在一个独立的真实会话里，因此它拥有自己的上下文与历史记录，'
+            + '并且可以像任何会话一样跨工作区工作。'),
+          React.createElement('p', { key: 'u' },
+            hasSession ? '助手会话已创建，可直接从左侧入口打开。' : '助手会话会在你第一次点开入口时自动创建。'),
         ]),
-        body,
+        ...(error === undefined ? [] : [React.createElement('div', { key: 'e', className: 'one-error' }, error)]),
+        ...(notice === undefined ? [] : [React.createElement('div', { key: 'n', className: 'one-hint' }, notice)]),
       ])
     }
 
     const inject = ['slots']
 
+    /**
+     * The entry's nav label.
+     *
+     * `sidebar.panellist` accepts a thunk and re-reads it on every projection,
+     * so the sidebar follows a rename without re-registering the slot. The
+     * cached value keeps the synchronous thunk from flickering while the next
+     * read is in flight.
+     */
+    let labelCache = NAME_FALLBACK
+    let labelPending: Promise<void> | undefined
+    function labelThunk(): string {
+      if (labelPending === undefined) {
+        labelPending = readSettings().then(value => {
+          if (typeof value.displayName === 'string' && value.displayName !== '') {
+            labelCache = value.displayName
+          }
+        }).catch(() => {
+          // A failed read leaves the last known label in place.
+        }).finally(() => { labelPending = undefined })
+      }
+      return labelCache
+    }
+
     function apply(ctx: ClientContextLike): void {
       ensureStyle()
       const slots = ctx.slots
       if (slots === undefined) return
+      const ctxRef = ctx
+
+      // The above-workspaces entry. `sidebar.panellist` sorts by `order` and the
+      // shipped icons start at 0, so a negative order keeps the assistant first.
       ctx.effect?.(() => {
-        // `shell.overlay` is a root-scoped list slot; a registrant supplies an
-        // id and order, and the panel draws its own chrome.
-        slots.inject('shell.overlay', () => slots.register({
-          name: 'shell.overlay',
-          id: 'dsh-one-panel',
-          order: 90,
-        }, OnePanel))
-      }, 'dsh-one: client overlay')
+        slots.inject('sidebar.panellist', () => slots.register({
+          name: 'sidebar.panellist',
+          id: PANEL_ID,
+          order: -100,
+          label: labelThunk,
+        }, (props: { size?: number }) => glyph(props?.size ?? 16)))
+      }, 'dsh-one: sidebar entry')
+
+      // Its paired central panel. DSH dispatches `selectPanel(id)` on click and
+      // renders this key, which then navigates to the real conversation.
       ctx.effect?.(() => {
-        // Rows in General Settings: one owner-declared row, so `id` is ours and
-        // must not shadow a shipped row.
-        slots.inject('settings.general.item', () => slots.register({
-          name: 'settings.general.item',
-          id: 'dsh-one-name',
+        slots.inject('main', () => slots.register({
+          name: 'main',
+          key: PANEL_ID,
+        }, () => AssistantPanel({ ctxRef })))
+      }, 'dsh-one: assistant panel')
+
+      // A dedicated Settings tab, not a row on somebody else's page.
+      ctx.effect?.(() => {
+        slots.inject('settings.section', () => slots.register({
+          name: 'settings.section',
+          id: 'dsh-one',
           order: 60,
-        }, NameRow))
-      }, 'dsh-one: settings row')
+          label: '助手',
+        }, () => SettingsSection()))
+      }, 'dsh-one: settings section')
     }
 
     return { inject, apply }

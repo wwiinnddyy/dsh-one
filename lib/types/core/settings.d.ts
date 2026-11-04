@@ -11,6 +11,8 @@ import type { OneStore } from '../store/store.js';
 export declare const SETTINGS_NAMESPACE = "one";
 /** The one setting this build reads: the assistant's display name. */
 export declare const DISPLAY_NAME_KEY = "displayName";
+/** The assistant's real DSH session, so the entry opens a normal conversation. */
+export declare const ASSISTANT_SESSION_KEY = "assistantSession";
 /** Longest accepted name, in Unicode code points. */
 export declare const DISPLAY_NAME_MAX_CHARS = 24;
 /** Version counter bumping on every accepted change, so live surfaces can react. */
@@ -25,6 +27,12 @@ export interface SettingsService {
     setName(value: string, updatedBy?: SettingRecord['updatedBy']): Promise<string>;
     /** Drop the override so the row default applies again. */
     resetName(updatedBy?: SettingRecord['updatedBy']): Promise<string>;
+    /** The session id the assistant conversation lives in, when one was opened. */
+    assistantSessionId(): string | undefined;
+    /** Remember the assistant's session id. */
+    setAssistantSessionId(sessionId: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    /** Forget the assistant's session, so the next open creates a fresh one. */
+    clearAssistantSessionId(updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     /** Every persisted setting row, newest namespace first. */
     list(): readonly SettingRecord[];
     /** Subscribe to accepted changes; returns the unsubscribe function. */
@@ -49,6 +57,9 @@ export declare class OneSettings implements SettingsService {
     hasOverride(): boolean;
     setName(value: string, updatedBy?: SettingRecord['updatedBy']): Promise<string>;
     resetName(updatedBy?: SettingRecord['updatedBy']): Promise<string>;
+    assistantSessionId(): string | undefined;
+    setAssistantSessionId(sessionId: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    clearAssistantSessionId(updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     list(): readonly SettingRecord[];
     subscribe(listener: () => void): () => void;
     private readOverride;

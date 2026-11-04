@@ -17,6 +17,9 @@ export const SETTINGS_NAMESPACE = 'one'
 /** The one setting this build reads: the assistant's display name. */
 export const DISPLAY_NAME_KEY = 'displayName'
 
+/** The assistant's real DSH session, so the entry opens a normal conversation. */
+export const ASSISTANT_SESSION_KEY = 'assistantSession'
+
 /** Longest accepted name, in Unicode code points. */
 export const DISPLAY_NAME_MAX_CHARS = 24
 
@@ -32,6 +35,12 @@ export interface SettingsService {
   setName(value: string, updatedBy?: SettingRecord['updatedBy']): Promise<string>
   /** Drop the override so the row default applies again. */
   resetName(updatedBy?: SettingRecord['updatedBy']): Promise<string>
+  /** The session id the assistant conversation lives in, when one was opened. */
+  assistantSessionId(): string | undefined
+  /** Remember the assistant's session id. */
+  setAssistantSessionId(sessionId: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>
+  /** Forget the assistant's session, so the next open creates a fresh one. */
+  clearAssistantSessionId(updatedBy?: SettingRecord['updatedBy']): Promise<void>
   /** Every persisted setting row, newest namespace first. */
   list(): readonly SettingRecord[]
   /** Subscribe to accepted changes; returns the unsubscribe function. */
@@ -104,6 +113,36 @@ export class OneSettings implements SettingsService {
     this.cached = undefined
     this.emit()
     return this.fallback
+  }
+
+  assistantSessionId(): string | undefined {
+    const record = this.store.getSetting(SETTINGS_NAMESPACE, ASSISTANT_SESSION_KEY)
+    const value = record?.value.trim()
+    return value === undefined || value === '' ? undefined : value
+  }
+
+  async setAssistantSessionId(
+    sessionId: string,
+    updatedBy: SettingRecord['updatedBy'] = 'human',
+  ): Promise<void> {
+    const value = sessionId.trim()
+    if (value === '') {
+      throw new OneErrorClass('one/session-id-empty', 'the assistant session id cannot be empty', {})
+    }
+    await this.store.putSetting({
+      namespace: SETTINGS_NAMESPACE,
+      key: ASSISTANT_SESSION_KEY,
+      value,
+      updatedAt: this.now(),
+      updatedBy,
+    })
+    this.emit()
+  }
+
+  async clearAssistantSessionId(updatedBy: SettingRecord['updatedBy'] = 'human'): Promise<void> {
+    void updatedBy
+    await this.store.deleteSetting(SETTINGS_NAMESPACE, ASSISTANT_SESSION_KEY)
+    this.emit()
   }
 
   list(): readonly SettingRecord[] {
