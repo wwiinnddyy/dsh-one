@@ -327,6 +327,19 @@ export const subscriptionSchema = z.object({
   createdAt: nonNegative,
 })
 
+/**
+ * One user-facing preference row. `namespace` groups settings by surface and
+ * `key` is the row name, so a single table carries every mutable setting
+ * without widening the domain schema per preference.
+ */
+export const settingSchema = z.object({
+  namespace: z.string(),
+  key: z.string(),
+  value: z.string(),
+  updatedAt: nonNegative,
+  updatedBy: z.enum(['human', 'agent', 'system']),
+})
+
 /** Domain declaration consumed by `ctx.storageDomain.open`. */
 export const oneDomainSpec = defineDomain({
   name: 'dsh_one',
@@ -348,5 +361,6 @@ export const oneDomainSpec = defineDomain({
     deliveries: domainTable(deliverySchema),
     cursors: domainTable(cursorSchema),
     subscriptions: domainTable(subscriptionSchema),
+    settings: domainTable(settingSchema),
   },
 })

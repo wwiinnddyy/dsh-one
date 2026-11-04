@@ -7,6 +7,7 @@ import { apply as applyIngress } from '../lib/ingress.js'
 export const TABLE_NAMES = [
   'sessions', 'outbox', 'audit', 'tasks', 'leases', 'reports', 'triggers', 'threads',
   'evals', 'decisions', 'policies', 'mandates', 'deliveries', 'cursors', 'subscriptions',
+  'settings',
 ]
 
 export function makeTable(seed = []) {

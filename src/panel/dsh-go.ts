@@ -2,6 +2,7 @@
 
 import type { DshContextLike, PanelOverview, TaskService, IntakeService } from '../types.js'
 import type { OneCore } from '../core/registry.js'
+import type { SettingsService } from '../core/settings.js'
 import { buildPanelOverview } from './api.js'
 
 interface DshGoServiceLike {
@@ -16,6 +17,7 @@ type View = Record<string, unknown>
 export function registerDshGoPanel(
   ctx: DshContextLike,
   core: OneCore,
+  settings: SettingsService,
 ): () => void {
   const disposers: (() => void)[] = []
   const attach = (child: DshContextLike): void => {
@@ -33,15 +35,17 @@ export function registerDshGoPanel(
     const intake = child.get('oneIntake') as IntakeService | undefined
     if (tasks !== undefined) unsubscribers.push(tasks.subscribe(notify))
     if (intake !== undefined) unsubscribers.push(intake.subscribe(notify))
+    unsubscribers.push(settings.subscribe(notify))
     disposers.push(() => {
       for (const unsubscribe of unsubscribers.reverse()) unsubscribe()
     })
     disposers.push(service.panel('one', {
-      view: () => panelView(buildPanelOverview(child, core)),
+      view: () => panelView(buildPanelOverview(child, core, settings)),
       data: (_scope: unknown, emit: (value: unknown) => void) => {
         const push = (): void => {
-          const overview = buildPanelOverview(child, core)
+          const overview = buildPanelOverview(child, core, settings)
           emit({
+            displayName: overview.displayName,
             attention: overview.attention.length,
             running: overview.running.length,
             history: overview.history.length,
@@ -53,18 +57,19 @@ export function registerDshGoPanel(
         const disposersInner: (() => void)[] = []
         if (tasks !== undefined) disposersInner.push(tasks.subscribe(push))
         if (intake !== undefined) disposersInner.push(intake.subscribe(push))
+        disposersInner.push(settings.subscribe(push))
         return () => {
           for (const dispose of disposersInner.reverse()) dispose()
         }
       },
       actions: {
-        refresh: (_scope: unknown, _event: unknown) => ({ refresh: true, toast: 'One refreshed' }),
+        refresh: (_scope: unknown, _event: unknown) => ({ refresh: true, toast: `${settings.displayName()} refreshed` }),
       },
     }))
     disposers.push(service.strip('one', (_scope: unknown, emit: (value: unknown) => void) => {
       const push = (): void => {
-        const overview = buildPanelOverview(child, core)
-        const text = `One ${overview.attention.length}/${overview.running.length}`
+        const overview = buildPanelOverview(child, core, settings)
+        const text = `${overview.displayName} ${overview.attention.length}/${overview.running.length}`
         emit({
           text,
           icon: overview.attention.length > 0 ? 'warning' : 'pending',
@@ -75,6 +80,7 @@ export function registerDshGoPanel(
       const disposersInner: (() => void)[] = []
       if (tasks !== undefined) disposersInner.push(tasks.subscribe(push))
       if (intake !== undefined) disposersInner.push(intake.subscribe(push))
+      disposersInner.push(settings.subscribe(push))
       return () => {
         for (const dispose of disposersInner.reverse()) dispose()
       }
@@ -118,7 +124,7 @@ function panelView(overview: PanelOverview): View {
   }))
   return {
     type: 'stack',
-    title: 'DSH One',
+    title: overview.displayName,
     children: [
       {
         type: 'keyValue',

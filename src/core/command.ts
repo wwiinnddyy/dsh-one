@@ -2,12 +2,14 @@
 
 import type { CommandDefinitionLike, CommandInvocationLike, CommandResultLike, DshContextLike, OneConfig } from '../types.js'
 import { OneError } from '../types.js'
+import type { SettingsService } from './settings.js'
 import { OneCore, agentSessionId } from './registry.js'
 import { classifyError, parseModelRoute, splitFirstToken } from '../util.js'
 import { handleTask, handleTasks } from '../task/commands.js'
 
 const USAGE = [
   'Usage:',
+  '  /one name [<name> | reset]               show or set the assistant name',
   '  /one sessions [all]                      list registered and host sessions',
   '  /one sessions add <sessionId> [cwd]      explicitly trust a session',
   '  /one send [--steer] [--id <requestId>] <sessionId> <text>',
@@ -21,14 +23,19 @@ const USAGE = [
 ].join('\n')
 
 /** Register the single `/one` command. */
-export function registerOneCommand(ctx: DshContextLike, core: OneCore, _config: OneConfig): () => void {
+export function registerOneCommand(
+  ctx: DshContextLike,
+  core: OneCore,
+  _config: OneConfig,
+  settings: SettingsService,
+): () => void {
   const definition: CommandDefinitionLike = {
     name: 'one',
-    description: 'DSH One: sessions, cross-session sends, models, and delegated tasks',
-    input: { hint: 'sessions | send | model | status | audit | tasks | task | help' },
+    description: 'DSH One: name, sessions, cross-session sends, models, and delegated tasks',
+    input: { hint: 'name | sessions | send | model | status | audit | tasks | task | help' },
     async handler(invocation: CommandInvocationLike): Promise<CommandResultLike> {
       try {
-        return await handle(invocation, core, ctx)
+        return await handle(invocation, core, ctx, settings)
       } catch (error: unknown) {
         if (error instanceof OneError) return { kind: 'error', text: `${error.code}: ${error.message}` }
         const classified = classifyError(error)
@@ -40,12 +47,19 @@ export function registerOneCommand(ctx: DshContextLike, core: OneCore, _config: 
   return dispose
 }
 
-async function handle(invocation: CommandInvocationLike, core: OneCore, ctx: DshContextLike): Promise<CommandResultLike> {
+async function handle(
+  invocation: CommandInvocationLike,
+  core: OneCore,
+  ctx: DshContextLike,
+  settings: SettingsService,
+): Promise<CommandResultLike> {
   const { token, rest } = splitFirstToken(invocation.rawInput)
   switch (token) {
     case '':
     case 'help':
       return { kind: 'success', text: USAGE }
+    case 'name':
+      return await handleName(rest, settings)
     case 'sessions':
       return handleSessions(rest, invocation, core)
     case 'send':
@@ -63,6 +77,20 @@ async function handle(invocation: CommandInvocationLike, core: OneCore, ctx: Dsh
     default:
       return { kind: 'error', text: `unknown /one action "${token}"\n${USAGE}` }
   }
+}
+
+async function handleName(rest: string, settings: SettingsService): Promise<CommandResultLike> {
+  const value = rest.trim()
+  if (value === '') {
+    const line = `${settings.displayName()}${settings.hasOverride() ? ' (custom)' : ' (default)'}`
+    return { kind: 'success', text: `${line}\nreset target: ${settings.defaultDisplayName()}` }
+  }
+  if (value === 'reset') {
+    const name = await settings.resetName()
+    return { kind: 'success', text: `name reset to ${name}` }
+  }
+  const name = await settings.setName(value)
+  return { kind: 'success', text: `name set to ${name} (${[...name].length} characters)` }
 }
 
 async function handleSessions(rest: string, invocation: CommandInvocationLike, core: OneCore): Promise<CommandResultLike> {

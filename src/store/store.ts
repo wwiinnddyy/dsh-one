@@ -14,6 +14,7 @@ import type {
   OutboxRecord,
   PolicyRecord,
   ReportRecord,
+  SettingRecord,
   SubscriptionRecord,
   TaskRecord,
   ThreadRecord,
@@ -81,6 +82,11 @@ class MemoryTable<T> implements TableLike<T> {
   }
 }
 
+/** Path-safe table key for one preference row (`[a-zA-Z0-9_-]+`). */
+function settingId(namespace: string, key: string): string {
+  return `${namespace}_${key}`
+}
+
 /** One opened storage surface over the shared `dsh-one` domain. */
 export class OneStore {
   readonly degraded: boolean
@@ -100,6 +106,7 @@ export class OneStore {
   private readonly deliveryTable: TableLike<DeliveryRecord>
   private readonly cursorTable: TableLike<CursorRecord>
   private readonly subscriptionTable: TableLike<SubscriptionRecord>
+  private readonly settingTable: TableLike<SettingRecord>
   private readonly config: OneConfig
 
   private constructor(config: OneConfig, domain: DomainLike | undefined, degraded: boolean) {
@@ -123,6 +130,7 @@ export class OneStore {
     this.deliveryTable = table('deliveries', new MemoryTable<DeliveryRecord>())
     this.cursorTable = table('cursors', new MemoryTable<CursorRecord>())
     this.subscriptionTable = table('subscriptions', new MemoryTable<SubscriptionRecord>())
+    this.settingTable = table('settings', new MemoryTable<SettingRecord>())
   }
 
   /** Build one store; the caller owns recovery and lifecycle. */
@@ -252,6 +260,29 @@ export class OneStore {
   getSubscription(id: string): SubscriptionRecord | undefined { return this.subscriptionTable.get(id) }
   async putSubscription(record: SubscriptionRecord): Promise<void> {
     await this.subscriptionTable.put(record.subscriptionId, record)
+  }
+
+  // ---- settings -----------------------------------------------------------------
+  /**
+   * One preference row; `namespace` scopes the key to its owning surface.
+   *
+   * The composite key is joined with `_`, not `:` or `.`: a per-record backend
+   * writes each key as a path segment and accepts only `[a-zA-Z0-9_-]+`, so
+   * the separator must satisfy that class rather than merely read well.
+   */
+  getSetting(namespace: string, key: string): SettingRecord | undefined {
+    return this.settingTable.get(settingId(namespace, key))
+  }
+  listSettings(namespace?: string): SettingRecord[] {
+    const rows = [...this.settingTable.entries()].map(([, record]) => record)
+    return (namespace === undefined ? rows : rows.filter(row => row.namespace === namespace))
+      .sort((a, b) => a.namespace.localeCompare(b.namespace) || a.key.localeCompare(b.key))
+  }
+  async putSetting(record: SettingRecord): Promise<void> {
+    await this.settingTable.put(settingId(record.namespace, record.key), record)
+  }
+  async deleteSetting(namespace: string, key: string): Promise<boolean> {
+    return await this.settingTable.delete(settingId(namespace, key))
   }
 
   /** Current active policy (the newest non-superseded record). */

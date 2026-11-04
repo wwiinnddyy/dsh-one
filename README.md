@@ -67,6 +67,7 @@ DSH_HOME=/tmp/dsh-one-smoke dsh --profile smoke --no-open
 `/one` never opens a model turn. It runs against host services and the shared store.
 
 ```text
+/one name [<name> | reset]
 /one sessions [all]
 /one sessions add <sessionId> [cwd]
 /one send [--steer] [--id <requestId>] <sessionId> <text>
@@ -84,6 +85,26 @@ DSH_HOME=/tmp/dsh-one-smoke dsh --profile smoke --no-open
 ```
 
 `/one task ...` is the human path and is not blocked by `taskMode: observe`.
+
+## The assistant name
+
+The plugin's user-facing name is a preference, not a package identity. The
+package id stays `@wwiinnddyy/dsh-one`; only the label the user sees changes.
+
+- `displayName` in the core row is the deployment default (24 characters,
+  `鲸宝` out of the box).
+- A name chosen by the user is persisted in the `settings` table and wins over
+  the row default from then on.
+- `/one name` prints the effective name and its reset target, `/one name <text>`
+  sets it, and `/one name reset` restores the row default.
+- In the Web shell, **Settings → General → 助手名称** shows the same value with
+  Save and Reset actions. It writes `PUT /one/api/settings` and
+  `DELETE /one/api/settings`.
+- Every surface reads the resolved name: the floating panel title and pill, the
+  DSH Go panel title and composer strip, and `/one/api/overview`.
+
+Names are trimmed, may not contain control characters, and are limited to 24
+code points. An invalid name is rejected and the stored value is left alone.
 
 ## Tools
 
@@ -223,14 +244,14 @@ The webhook route is registered through `ctx.webServer.register` at `webhookPath
 
 ### Web
 
-`/one/api/overview`, `/one/api/tasks`, and `/one/api/decisions` are read-only and call the module read services; they never open `storageDomain` themselves. The overview order is:
+`/one/api/overview`, `/one/api/tasks`, and `/one/api/decisions` are read-only and call the module read services; they never open `storageDomain` themselves. `/one/api/settings` is the one write endpoint: `GET` reads the name, `PUT` persists one, and `DELETE` restores the row default. It sits behind the same `connection.requestRejection` fence as the read routes, because it writes user state. The overview order is:
 
 1. attention (needs a person);
 2. running;
 3. history;
 4. health.
 
-The client half registers a floating panel in `shell.overlay` and reads only `/one/api/overview`. It does not import host implementation code. `dsh.client.inject` is informational; the slot declaration remains the real load gate.
+The client half registers a floating panel in `shell.overlay` and reads only `/one/api/overview`. It also registers one owner-declared row in `settings.general.item` (id `dsh-one-name`), which draws its own label, current value, and write path because the settings shell projects no props into a General row. It does not import host implementation code. `dsh.client.inject` is informational; the slot declaration remains the real load gate.
 
 ### DSH Go
 
@@ -256,11 +277,13 @@ defineDomain({
   version: 2,
   compatibleVersions: [1],
   tables: { sessions, outbox, audit, tasks, leases, reports, triggers, threads, evals,
-            decisions, policies, mandates, deliveries, cursors, subscriptions },
+            decisions, policies, mandates, deliveries, cursors, subscriptions, settings },
 })
 ```
 
-The domain identifier must match DSH's `UNIT_NAME_RE` (`/^[a-z][a-z0-9_]*$/`), which does not allow a hyphen. A real storage backend rejects `dsh-one` at open. The plugin therefore keeps one domain named `dsh_one` (the display name remains DSH One); the previous unchecked `dsh-one` spec could not have persisted on a real host. Record schemas validate at the durable boundary; tables use single-key `put`/`update`, and no cross-table transaction is assumed.
+The domain identifier must match DSH's `UNIT_NAME_RE` (`/^[a-z][a-z0-9_]*$/`), which does not allow a hyphen. A real storage backend rejects `dsh-one` at open. The plugin therefore keeps one domain named `dsh_one` (the display name is the user-chosen assistant name); the previous unchecked `dsh-one` spec could not have persisted on a real host. Record schemas validate at the durable boundary; tables use single-key `put`/`update`, and no cross-table transaction is assumed.
+
+`settings` carries user preferences keyed by `<namespace>.<key>`. Adding a table does not bump `version`, because the single-document backend reads a table missing from an older document as empty and rejects a document whose version stamp does not match — so bumping the version would make an existing store unopenable for a change that needs no migration.
 
 ## Configuration
 

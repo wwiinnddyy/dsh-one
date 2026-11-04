@@ -34,6 +34,8 @@ interface OverviewItem {
 }
 
 interface Overview {
+  readonly displayName: string
+  readonly defaultDisplayName: string
   readonly attention: readonly OverviewItem[]
   readonly running: readonly OverviewItem[]
   readonly history: readonly OverviewItem[]
@@ -97,6 +99,15 @@ window.__ModuleLoader__.load({
         '.one-health{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px;opacity:.8}',
         '.one-empty{opacity:.7;padding:8px 0}',
         '.one-err{color:#e66;padding:8px 0}',
+        '.one-set{display:flex;flex-direction:column;gap:8px;padding:2px 0}',
+        '.one-set label{font-weight:600}',
+        '.one-set p{margin:0;font-size:12px;opacity:.7}',
+        '.one-set-row{display:flex;gap:8px;align-items:center}',
+        '.one-set input{flex:1;min-width:0;padding:6px 8px;border-radius:8px;',
+        'border:1px solid var(--dsh-border,#8884);background:var(--dsh-bg,#111);color:inherit;font:inherit}',
+        '.one-set button{padding:6px 10px;border-radius:8px;border:1px solid var(--dsh-border,#8884);',
+        'background:transparent;color:inherit;font:inherit;cursor:pointer}',
+        '.one-set button:disabled{opacity:.5;cursor:default}',
       ].join('')
       document.head.appendChild(style)
     }
@@ -114,6 +125,115 @@ window.__ModuleLoader__.load({
         ...(items.length === 0
           ? [React.createElement('div', { key: 'e', className: 'one-empty' }, 'None')]
           : items.slice(0, 12).map(itemRow)),
+      ])
+    }
+
+    interface SettingsView {
+      readonly displayName: string
+      readonly defaultDisplayName: string
+      readonly overridden: boolean
+    }
+
+    /** One-shot settings read; the settings row owns its own refresh. */
+    async function readSettings(): Promise<SettingsView> {
+      const response = await fetch('/one/api/settings', { credentials: 'same-origin', cache: 'no-store' })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return await response.json() as SettingsView
+    }
+
+    async function writeSettings(method: 'PUT' | 'DELETE', displayName?: string): Promise<SettingsView> {
+      const response = await fetch('/one/api/settings', {
+        method,
+        credentials: 'same-origin',
+        cache: 'no-store',
+        ...(method === 'PUT'
+          ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ displayName }) }
+          : {}),
+      })
+      const value = await response.json() as SettingsView & { error?: string }
+      if (!response.ok) throw new Error(value.error ?? `HTTP ${response.status}`)
+      return value
+    }
+
+    /**
+     * The General-settings row. The row owns its copy, current value, and write
+     * path, because the settings shell projects no props into it.
+     */
+    function NameRow(): ReactElementLike {
+      const [view, setView] = React.useState<SettingsView | undefined>(undefined)
+      const [draft, setDraft] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState<string | undefined>(undefined)
+      React.useEffect(() => {
+        let alive = true
+        void readSettings().then(value => {
+          if (!alive) return
+          setView(value)
+          setDraft(value.displayName)
+        }).catch((loadError: unknown) => {
+          if (alive) setError(String(loadError))
+        })
+        return () => { alive = false }
+      }, [])
+      const apply = (next: SettingsView): void => {
+        setView(next)
+        setDraft(next.displayName)
+        setError(undefined)
+      }
+      const save = async (): Promise<void> => {
+        setBusy(true)
+        try {
+          apply(await writeSettings('PUT', draft))
+        } catch (saveError: unknown) {
+          setError(String(saveError))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const reset = async (): Promise<void> => {
+        setBusy(true)
+        try {
+          apply(await writeSettings('DELETE'))
+        } catch (resetError: unknown) {
+          setError(String(resetError))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const unchanged = view !== undefined && draft.trim() === view.displayName
+      return React.createElement('div', { className: 'one-set' }, [
+        React.createElement('label', { key: 'l', htmlFor: 'dsh-one-name-input' }, '助手名称'),
+        React.createElement('p', { key: 'd' },
+          view === undefined
+            ? '读取中…'
+            : `显示在面板、命令和 DSH Go 上。默认：${view.defaultDisplayName}${view.overridden ? '（已自定义）' : ''}`),
+        React.createElement('div', { key: 'r', className: 'one-set-row' }, [
+          React.createElement('input', {
+            key: 'i',
+            id: 'dsh-one-name-input',
+            value: draft,
+            maxLength: 24,
+            placeholder: view?.defaultDisplayName ?? '',
+            disabled: busy,
+            onChange: (event: { target?: { value?: string } }) => setDraft(event.target?.value ?? ''),
+            onKeyDown: (event: { key?: string }) => {
+              if (event.key === 'Enter' && !unchanged && draft.trim() !== '') void save()
+            },
+          }),
+          React.createElement('button', {
+            key: 's',
+            type: 'button',
+            disabled: busy || unchanged || draft.trim() === '',
+            onClick: () => { void save() },
+          }, '保存'),
+          React.createElement('button', {
+            key: 'x',
+            type: 'button',
+            disabled: busy || view?.overridden !== true,
+            onClick: () => { void reset() },
+          }, '恢复默认'),
+        ]),
+        ...(error === undefined ? [] : [React.createElement('div', { key: 'e', className: 'one-err' }, error)]),
       ])
     }
 
@@ -145,12 +265,13 @@ window.__ModuleLoader__.load({
       }, [])
       const attention = data?.attention.length ?? 0
       const running = data?.running.length ?? 0
+      const name = data?.displayName ?? 'One'
       const pill = React.createElement('button', {
         key: 'pill',
         className: 'one-pill',
         onClick: () => setOpen(!open),
-        title: 'DSH One',
-      }, `One ${attention}/${running}`)
+        title: name,
+      }, `${name} ${attention}/${running}`)
       if (!open) return pill
       const body = React.createElement('div', { key: 'body', className: 'one-body' }, [
         ...(error === undefined ? [] : [React.createElement('div', { key: 'err', className: 'one-err' }, error)]),
@@ -173,7 +294,7 @@ window.__ModuleLoader__.load({
       ])
       return React.createElement('div', { key: 'panel', className: 'one-panel' }, [
         React.createElement('div', { key: 'head', className: 'one-head' }, [
-          React.createElement('h3', { key: 't' }, 'DSH One'),
+          React.createElement('h3', { key: 't' }, name),
           React.createElement('button', { key: 'c', onClick: () => setOpen(false) }, 'Close'),
         ]),
         body,
@@ -187,13 +308,23 @@ window.__ModuleLoader__.load({
       const slots = ctx.slots
       if (slots === undefined) return
       ctx.effect?.(() => {
+        // `shell.overlay` is a root-scoped list slot; a registrant supplies an
+        // id and order, and the panel draws its own chrome.
         slots.inject('shell.overlay', () => slots.register({
           name: 'shell.overlay',
           id: 'dsh-one-panel',
           order: 90,
-          label: 'DSH One',
         }, OnePanel))
       }, 'dsh-one: client overlay')
+      ctx.effect?.(() => {
+        // Rows in General Settings: one owner-declared row, so `id` is ours and
+        // must not shadow a shipped row.
+        slots.inject('settings.general.item', () => slots.register({
+          name: 'settings.general.item',
+          id: 'dsh-one-name',
+          order: 60,
+        }, NameRow))
+      }, 'dsh-one: settings row')
     }
 
     return { inject, apply }

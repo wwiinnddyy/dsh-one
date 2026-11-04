@@ -226,6 +226,8 @@ export interface DshContextLike {
 export type OneMode = 'observe' | 'active';
 /** Core row configuration. */
 export interface OneConfig {
+    /** User-facing assistant name shown in every surface; the package id stays stable. */
+    readonly displayName: string;
     readonly mode: OneMode;
     readonly allowAllSessions: boolean;
     readonly allowedSessionIds: readonly string[];
@@ -649,6 +651,10 @@ export interface PanelItem {
 }
 export interface PanelOverview {
     readonly generatedAt: number;
+    /** Resolved assistant name from the persisted setting, else the row default. */
+    readonly displayName: string;
+    /** The name the row configuration declares; the UI uses it as the reset target. */
+    readonly defaultDisplayName: string;
     readonly attention: readonly PanelItem[];
     readonly running: readonly PanelItem[];
     readonly history: readonly PanelItem[];
@@ -693,6 +699,14 @@ export interface OutboxRecord {
     readonly updatedAt: number;
     readonly completedAt?: number;
     readonly error?: string;
+}
+/** One persisted user preference row, keyed by namespace and key. */
+export interface SettingRecord {
+    readonly namespace: string;
+    readonly key: string;
+    readonly value: string;
+    readonly updatedAt: number;
+    readonly updatedBy: 'human' | 'agent' | 'system';
 }
 /** Append-only audit record. */
 export interface AuditRecord {

@@ -5,6 +5,7 @@ import type { OneConfig } from '../types.js'
 /** The core posture used by delegate/ingress when `oneCore` is not mounted. */
 export function defaultCoreConfig(): OneConfig {
   return {
+    displayName: '鲸宝',
     mode: 'active',
     allowAllSessions: true,
     allowedSessionIds: [],

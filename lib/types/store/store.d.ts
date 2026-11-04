@@ -1,5 +1,5 @@
 /** Durable state for dsh-one, backed by `ctx.storageDomain` with an in-memory fallback. */
-import type { AuditRecord, CursorRecord, DecisionRecord, DeliveryRecord, DshContextLike, EvalRecord, LeaseRecord, MandateRecord, ManagedSessionRecord, OneConfig, OutboxRecord, PolicyRecord, ReportRecord, SubscriptionRecord, TaskRecord, ThreadRecord, TriggerRecord } from '../types.js';
+import type { AuditRecord, CursorRecord, DecisionRecord, DeliveryRecord, DshContextLike, EvalRecord, LeaseRecord, MandateRecord, ManagedSessionRecord, OneConfig, OutboxRecord, PolicyRecord, ReportRecord, SettingRecord, SubscriptionRecord, TaskRecord, ThreadRecord, TriggerRecord } from '../types.js';
 /** One opened storage surface over the shared `dsh-one` domain. */
 export declare class OneStore {
     readonly degraded: boolean;
@@ -19,6 +19,7 @@ export declare class OneStore {
     private readonly deliveryTable;
     private readonly cursorTable;
     private readonly subscriptionTable;
+    private readonly settingTable;
     private readonly config;
     private constructor();
     /** Build one store; the caller owns recovery and lifecycle. */
@@ -69,6 +70,17 @@ export declare class OneStore {
     putCursor(record: CursorRecord): Promise<void>;
     getSubscription(id: string): SubscriptionRecord | undefined;
     putSubscription(record: SubscriptionRecord): Promise<void>;
+    /**
+     * One preference row; `namespace` scopes the key to its owning surface.
+     *
+     * The composite key is joined with `_`, not `:` or `.`: a per-record backend
+     * writes each key as a path segment and accepts only `[a-zA-Z0-9_-]+`, so
+     * the separator must satisfy that class rather than merely read well.
+     */
+    getSetting(namespace: string, key: string): SettingRecord | undefined;
+    listSettings(namespace?: string): SettingRecord[];
+    putSetting(record: SettingRecord): Promise<void>;
+    deleteSetting(namespace: string, key: string): Promise<boolean>;
     /** Current active policy (the newest non-superseded record). */
     activePolicy(): PolicyRecord | undefined;
     /** A `sending` row interrupted by a process stop has an unknown outcome. */

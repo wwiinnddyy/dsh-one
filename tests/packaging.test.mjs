@@ -55,4 +55,5 @@ test('the client bundle registers under the package id and imports only React', 
   assert.match(client, /__ModuleLoader__\.load/u)
   assert.match(client, new RegExp(pkg.name.replace('/', '\\/'), 'u'))
   assert.doesNotMatch(client, /@deepseek-ai\//u)
+  assert.match(client, /settings\.general\.item/u)
 })

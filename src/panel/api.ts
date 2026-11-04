@@ -12,16 +12,21 @@ import type {
   WebServerLike,
 } from '../types.js'
 import type { OneCore } from '../core/registry.js'
-import { jsonResponse } from '../source/github.js'
+import type { SettingsService } from '../core/settings.js'
+import { readBody, jsonResponse } from '../source/github.js'
 import { classifyError, now as systemNow } from '../util.js'
 
-/** Register the panel's read endpoints. They never open storage themselves. */
-export function registerPanelApi(ctx: DshContextLike, core: OneCore): () => void {
+/** Register the panel's read endpoints and the one settings write endpoint. */
+export function registerPanelApi(
+  ctx: DshContextLike,
+  core: OneCore,
+  settings: SettingsService,
+): () => void {
   const server = ctx.get('webServer') as WebServerLike | undefined
   if (server === undefined || typeof server.register !== 'function') return () => {}
   const disposers = [
     server.register({ kind: 'exact', path: '/one/api/overview', handler: wrap(ctx, async (req, res) => {
-      jsonResponse(res, 200, buildPanelOverview(ctx, core))
+      jsonResponse(res, 200, buildPanelOverview(ctx, core, settings))
     }) }),
     server.register({ kind: 'exact', path: '/one/api/tasks', handler: wrap(ctx, async (_req, res) => {
       const tasks = taskService(ctx)
@@ -31,6 +36,13 @@ export function registerPanelApi(ctx: DshContextLike, core: OneCore): () => void
       const intake = intakeService(ctx)
       jsonResponse(res, 200, { items: intake === undefined ? [] : intake.decisions(30) })
     }) }),
+    server.register({
+      kind: 'exact',
+      path: '/one/api/settings',
+      handler: wrap(ctx, async (req, res) => {
+        await handleSettingsRoute(ctx, settings, req, res)
+      }),
+    }),
   ]
   return () => {
     for (const dispose of disposers.reverse()) dispose()
@@ -65,14 +77,82 @@ function rejectUnauthenticated(ctx: DshContextLike, req: HttpRequestLike, res: H
 
 function taskService(ctx: DshContextLike): TaskService | undefined {
   return ctx.get('oneTasks') as TaskService | undefined
-}
-
-function intakeService(ctx: DshContextLike): IntakeService | undefined {
+}function intakeService(ctx: DshContextLike): IntakeService | undefined {
   return ctx.get('oneIntake') as IntakeService | undefined
 }
 
+/**
+ * GET reads the current name, PUT persists one (`{ displayName }`), and
+ * DELETE restores the row default. The route sits behind the same
+ * authentication fence as the read endpoints, because it writes user state.
+ */
+async function handleSettingsRoute(
+  ctx: DshContextLike,
+  settings: SettingsService,
+  req: HttpRequestLike,
+  res: HttpResponseLike,
+): Promise<void> {
+  void ctx
+  const method = (req.method ?? 'GET').toUpperCase()
+  if (method === 'GET') {
+    jsonResponse(res, 200, settingsPayload(settings))
+    return
+  }
+  if (method === 'DELETE') {
+    const name = await settings.resetName()
+    jsonResponse(res, 200, { ...settingsPayload(settings), displayName: name })
+    return
+  }
+  if (method !== 'PUT' && method !== 'POST') {
+    jsonResponse(res, 405, { error: 'method not allowed' })
+    return
+  }
+  let body: unknown
+  try {
+    body = JSON.parse(await readBody(req, 8_192))
+  } catch (error: unknown) {
+    const status = (error as { status?: number }).status
+    jsonResponse(res, status === 413 ? 413 : 400, { error: classifyError(error).message })
+    return
+  }
+  const requested = typeof body === 'object' && body !== null
+    ? (body as { displayName?: unknown; reset?: unknown })
+    : undefined
+  if (requested?.reset === true) {
+    const name = await settings.resetName()
+    jsonResponse(res, 200, { ...settingsPayload(settings), displayName: name })
+    return
+  }
+  if (typeof requested?.displayName !== 'string') {
+    jsonResponse(res, 400, { error: 'displayName must be a string' })
+    return
+  }
+  try {
+    const name = await settings.setName(requested.displayName)
+    jsonResponse(res, 200, { ...settingsPayload(settings), displayName: name })
+  } catch (error: unknown) {
+    const code = (error as { code?: string }).code
+    jsonResponse(res, code === 'one/name-too-long' || code === 'one/name-invalid' || code === 'one/name-empty' ? 400 : 500, {
+      error: classifyError(error).message,
+      ...(code === undefined ? {} : { code }),
+    })
+  }
+}
+
+function settingsPayload(settings: SettingsService): Record<string, unknown> {
+  return {
+    displayName: settings.displayName(),
+    defaultDisplayName: settings.defaultDisplayName(),
+    overridden: settings.hasOverride(),
+  }
+}
+
 /** Build the same overview the HTTP route serves; the DSH Go panel reads it directly. */
-export function buildPanelOverview(ctx: DshContextLike, core: OneCore): PanelOverview {
+export function buildPanelOverview(
+  ctx: DshContextLike,
+  core: OneCore,
+  settings: SettingsService,
+): PanelOverview {
   const at = systemNow()
   const tasks = taskService(ctx)
   const intake = intakeService(ctx)
@@ -111,6 +191,8 @@ export function buildPanelOverview(ctx: DshContextLike, core: OneCore): PanelOve
   const ingress = intake === undefined ? 'unavailable' : intake.health().acceptMode
   return {
     generatedAt: at,
+    displayName: settings.displayName(),
+    defaultDisplayName: settings.defaultDisplayName(),
     attention,
     running,
     history,

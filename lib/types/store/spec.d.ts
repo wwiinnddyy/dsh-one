@@ -359,8 +359,8 @@ export declare const triggerSchema: z.ZodObject<{
     gateReason: z.ZodOptional<z.ZodString>;
     evalId: z.ZodOptional<z.ZodString>;
     decision: z.ZodOptional<z.ZodEnum<{
-        "would-accept": "would-accept";
         accept: "accept";
+        "would-accept": "would-accept";
         decline: "decline";
         "observe-only": "observe-only";
         "no-delegate": "no-delegate";
@@ -411,8 +411,8 @@ export declare const evalSchema: z.ZodObject<{
         note: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>>;
     outcome: z.ZodOptional<z.ZodEnum<{
-        "would-accept": "would-accept";
         accept: "accept";
+        "would-accept": "would-accept";
         decline: "decline";
     }>>;
     reason: z.ZodOptional<z.ZodString>;
@@ -427,8 +427,8 @@ export declare const decisionSchema: z.ZodObject<{
     threadId: z.ZodString;
     triggerId: z.ZodString;
     outcome: z.ZodEnum<{
-        "would-accept": "would-accept";
         accept: "accept";
+        "would-accept": "would-accept";
         decline: "decline";
         "observe-only": "observe-only";
         "no-delegate": "no-delegate";
@@ -519,6 +519,22 @@ export declare const subscriptionSchema: z.ZodObject<{
         none: "none";
     }>;
     createdAt: z.ZodNumber;
+}, z.core.$strip>;
+/**
+ * One user-facing preference row. `namespace` groups settings by surface and
+ * `key` is the row name, so a single table carries every mutable setting
+ * without widening the domain schema per preference.
+ */
+export declare const settingSchema: z.ZodObject<{
+    namespace: z.ZodString;
+    key: z.ZodString;
+    value: z.ZodString;
+    updatedAt: z.ZodNumber;
+    updatedBy: z.ZodEnum<{
+        human: "human";
+        agent: "agent";
+        system: "system";
+    }>;
 }, z.core.$strip>;
 /** Domain declaration consumed by `ctx.storageDomain.open`. */
 export declare const oneDomainSpec: {
@@ -672,7 +688,7 @@ export declare const oneDomainSpec: {
             gate: "pass" | "reject" | "ignore";
             gateReason?: string | undefined;
             evalId?: string | undefined;
-            decision?: "would-accept" | "accept" | "decline" | "observe-only" | "no-delegate" | undefined;
+            decision?: "accept" | "would-accept" | "decline" | "observe-only" | "no-delegate" | undefined;
             taskId?: string | undefined;
             payload?: string | undefined;
         }>;
@@ -708,7 +724,7 @@ export declare const oneDomainSpec: {
                 pass: boolean;
                 note?: string | undefined;
             }[] | undefined;
-            outcome?: "would-accept" | "accept" | "decline" | undefined;
+            outcome?: "accept" | "would-accept" | "decline" | undefined;
             reason?: string | undefined;
             payload?: string | undefined;
             settledAt?: number | undefined;
@@ -718,7 +734,7 @@ export declare const oneDomainSpec: {
             evalId: string;
             threadId: string;
             triggerId: string;
-            outcome: "would-accept" | "accept" | "decline" | "observe-only" | "no-delegate";
+            outcome: "accept" | "would-accept" | "decline" | "observe-only" | "no-delegate";
             reasons: string[];
             policyVersion: string;
             createdAt: number;
@@ -778,6 +794,13 @@ export declare const oneDomainSpec: {
             sourceId: string;
             mode: "reply" | "none";
             createdAt: number;
+        }>;
+        settings: DomainTableSpec<{
+            namespace: string;
+            key: string;
+            value: string;
+            updatedAt: number;
+            updatedBy: "human" | "agent" | "system";
         }>;
     };
 };
