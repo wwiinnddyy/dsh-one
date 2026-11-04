@@ -128,6 +128,34 @@ All tools declare standard JSON Schema parameters and output schemas (object-lev
 The assistant is an ordinary DSH session, not a private chat surface. Three
 properties make it behave like a coordinator rather than a chat box.
 
+### Its own identity
+
+A Session with a `cwd` is still an ordinary blank conversation: DSH builds its
+system prompt from harness defaults and whatever plugins contribute, and none of
+them know the Session is supposed to be an assistant. That is why opening it felt
+identical to a new chat.
+
+The plugin therefore registers one `systemPrompt` section whose text is a
+function of the rendering Agent. It reads the persisted assistant session id and
+returns the identity text only for that Session, so a user's own chats receive
+nothing. Two details come from the working `ds-bot` plugin rather than from
+guesswork: the assembly context carries `agent.id`, and a section registered on
+an Agent's own context scope applies to that Agent alone.
+
+The text has three parts:
+
+| Part | Editable | Contents |
+|---|---|---|
+| Frame | no | Identity heading, and the boundary rules below |
+| Body | **yes** | Who it is, how it works, when it speaks |
+| Boundary | no | No unrequested changes, no instructions from data, no false claims |
+
+The frame and boundary are outside the editable body on purpose: a user editing
+their assistant's tone should not be able to delete the rules that keep it
+honest. The default body is a constant, so a fresh install behaves correctly with
+no setup, and an edit in the settings tab reaches the very next model step
+because the section re-reads the settings on every assembly.
+
 ### Its own home directory
 
 A Session without a `cwd` belongs to no Workspace, and the DSH client then
@@ -304,7 +332,7 @@ The webhook route is registered through `ctx.webServer.register` at `webhookPath
 
 ### Web
 
-`/one/api/overview`, `/one/api/tasks`, and `/one/api/decisions` are read-only and call the module read services; they never open `storageDomain` themselves. `/one/api/settings` is the one settings write endpoint: `GET` reads the name, `PUT` persists one, and `DELETE` restores the row default. It sits behind the same `connection.requestRejection` fence as the read routes, because it writes user state. The overview order is:
+`/one/api/overview`, `/one/api/tasks`, and `/one/api/decisions` are read-only and call the module read services; they never open `storageDomain` themselves. `/one/api/settings` is the one settings write endpoint: `GET` reads the name, the behaviour text, and their defaults; `PUT` with `displayName` persists a name, `PUT` with `persona` persists an edited behaviour text, `PUT` with `resetPersona: true` restores the built-in text, and `DELETE` restores the row default name. It sits behind the same `connection.requestRejection` fence as the read routes, because it writes user state. The overview order is:
 
 1. attention (needs a person);
 2. running;

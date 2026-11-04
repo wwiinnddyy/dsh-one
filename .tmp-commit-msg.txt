@@ -1,0 +1,28 @@
+feat: give the assistant an identity instead of a blank conversation
+
+A Session with a `cwd` is still an ordinary blank conversation: DSH builds
+its system prompt from harness defaults and contributing plugins, and none
+of them knew this Session was meant to be an assistant. That is why opening
+it felt identical to starting a new chat.
+
+The plugin now registers one `systemPrompt` section whose text is a function
+of the rendering Agent. It reads the persisted assistant session id and
+returns text only for that Session, so a user's own chats receive nothing.
+Both mechanics are taken from the working `ds-bot` plugin rather than
+guessed: the assembly context carries `agent.id`, and a section registered on
+an Agent's own context scope applies to that Agent alone.
+
+The text has three parts: a fixed frame, an editable body (who it is, how it
+works, when it speaks), and fixed boundary rules. The frame and boundary sit
+outside the editable body on purpose, so editing the tone cannot delete the
+rules that keep the assistant honest.
+
+- The default body is a constant, so a fresh install works with no setup.
+- The section re-reads the settings on every assembly, so an edit in the
+  settings tab reaches the very next model step, and a restart needs no
+  warm-up: the persisted session id is the single source of truth.
+- The home directory is now registered through `workspaceRegistry` before the
+  Session is created, so the client resolves a real Workspace id.
+- The settings tab gains a prompt editor with save and restore-default.
+
+Adds 13 tests (96 total).

@@ -56,6 +56,12 @@ interface SettingsView {
   readonly home?: string | null
   /** Whether progress narration is muted. */
   readonly notifyMuted?: boolean
+  /** The user's behaviour-text override; `null` means the built-in default. */
+  readonly persona?: string | null
+  /** The built-in behaviour text, shown as the editor's placeholder. */
+  readonly defaultPersona?: string
+  /** Longest accepted override. */
+  readonly personaMaxChars?: number
 }
 
 interface AssistantView {
@@ -106,6 +112,10 @@ function ensureStyle(): void {
     '.one-row{display:flex;align-items:center;gap:8px}',
     '.one-input{flex:1;min-width:0;padding:6px 10px;border-radius:8px;font:inherit;color:inherit;',
     'border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base,transparent)}',
+    '.one-textarea{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;font:inherit;',
+    'font-family:var(--dsw-alias-font-mono,ui-monospace,monospace);font-size:12px;line-height:18px;',
+    'color:inherit;resize:vertical;border:.5px solid var(--dsw-alias-border-l1);',
+    'background:var(--dsw-alias-bg-base,transparent)}',
     '.one-button{padding:6px 12px;border-radius:8px;font:inherit;color:inherit;cursor:pointer;',
     'border:.5px solid var(--dsw-alias-border-l1);background:transparent}',
     '.one-button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-1)}',
@@ -214,6 +224,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState<string | undefined>(undefined)
       const [notice, setNotice] = React.useState<string | undefined>(undefined)
+      const [personaDraft, setPersonaDraft] = React.useState('')
 
       React.useEffect(() => {
         let alive = true
@@ -221,6 +232,7 @@ window.__ModuleLoader__.load({
           if (!alive) return
           setView(value)
           setDraft(value.displayName)
+          setPersonaDraft(value.persona ?? value.defaultPersona ?? '')
         }).catch((loadError: unknown) => {
           if (alive) setError(String(loadError))
         })
@@ -230,7 +242,42 @@ window.__ModuleLoader__.load({
       const apply = (next: SettingsView): void => {
         setView(next)
         setDraft(next.displayName)
+        setPersonaDraft(next.persona ?? next.defaultPersona ?? '')
         setError(undefined)
+      }
+
+      const savePersona = async (): Promise<void> => {
+        setBusy(true)
+        setNotice(undefined)
+        try {
+          apply(await jsonFetch('/one/api/settings', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ persona: personaDraft }),
+          }) as SettingsView)
+          setNotice('提示词已保存，下一句对话生效')
+        } catch (saveError: unknown) {
+          setError(String(saveError))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const resetPersona = async (): Promise<void> => {
+        setBusy(true)
+        setNotice(undefined)
+        try {
+          apply(await jsonFetch('/one/api/settings', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ resetPersona: true }),
+          }) as SettingsView)
+          setNotice('已恢复默认提示词')
+        } catch (resetError: unknown) {
+          setError(String(resetError))
+        } finally {
+          setBusy(false)
+        }
       }
 
       const save = async (): Promise<void> => {
@@ -312,6 +359,42 @@ window.__ModuleLoader__.load({
             + '并且可以像任何会话一样跨工作区工作。'),
           React.createElement('p', { key: 'u' },
             hasSession ? '助手会话已创建，可直接从左侧入口打开。' : '助手会话会在你第一次点开入口时自动创建。'),
+        ]),
+        React.createElement('div', { key: 'persona', className: 'one-field' }, [
+          React.createElement('label', { key: 'l', htmlFor: 'dsh-one-persona' }, '助手提示词'),
+          React.createElement('p', { key: 'd' },
+            '决定助手怎么工作、什么时候开口。保存后下一句话就生效，不用重开会话。'
+            + '身份与安全边界固定保留，不在这段文字里。'),
+          React.createElement('textarea', {
+            key: 't',
+            id: 'dsh-one-persona',
+            className: 'one-textarea',
+            rows: 14,
+            value: personaDraft,
+            maxLength: view?.personaMaxChars ?? 8000,
+            placeholder: view?.defaultPersona ?? '',
+            disabled: busy || view === undefined,
+            onChange: (event: { target?: { value?: string } }) => {
+              setPersonaDraft(event.target?.value ?? '')
+              setNotice(undefined)
+            },
+          }),
+          React.createElement('div', { key: 'r', className: 'one-row' }, [
+            React.createElement('button', {
+              key: 's',
+              type: 'button',
+              className: 'one-button',
+              disabled: busy || personaDraft.trim() === '',
+              onClick: () => { void savePersona() },
+            }, busy ? '保存中…' : '保存提示词'),
+            React.createElement('button', {
+              key: 'x',
+              type: 'button',
+              className: 'one-button',
+              disabled: busy || view?.persona == null,
+              onClick: () => { void resetPersona() },
+            }, '恢复默认提示词'),
+          ]),
         ]),
         React.createElement('div', { key: 'home', className: 'one-field' }, [
           React.createElement('label', { key: 'l' }, '助手工作区'),

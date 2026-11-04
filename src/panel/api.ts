@@ -15,6 +15,8 @@ import type { OneCore } from '../core/registry.js'
 import type { SettingsService } from '../core/settings.js'
 import { readBody, jsonResponse } from '../source/github.js'
 import { classifyError, now as systemNow } from '../util.js'
+import { DEFAULT_PERSONA, PERSONA_MAX_CHARS } from '../core/persona.js'
+import { ensureAssistantWorkspace } from '../core/identity.js'
 
 /** Register the panel's read endpoints and the one settings write endpoint. */
 export function registerPanelApi(
@@ -123,8 +125,26 @@ async function handleSettingsRoute(
     return
   }
   const requested = typeof body === 'object' && body !== null
-    ? (body as { displayName?: unknown; reset?: unknown })
+    ? (body as { displayName?: unknown; reset?: unknown; persona?: unknown; resetPersona?: unknown })
     : undefined
+  if (requested?.resetPersona === true) {
+    await settings.clearPersona()
+    jsonResponse(res, 200, settingsPayload(settings))
+    return
+  }
+  if (typeof requested?.persona === 'string') {
+    try {
+      await settings.setPersona(requested.persona)
+      jsonResponse(res, 200, settingsPayload(settings))
+    } catch (error: unknown) {
+      const code = (error as { code?: string }).code
+      jsonResponse(res, code === 'one/persona-empty' || code === 'one/persona-too-long' ? 400 : 500, {
+        error: classifyError(error).message,
+        ...(code === undefined ? {} : { code }),
+      })
+    }
+    return
+  }
   if (requested?.reset === true) {
     const name = await settings.resetName()
     jsonResponse(res, 200, { ...settingsPayload(settings), displayName: name })
@@ -154,6 +174,9 @@ function settingsPayload(settings: SettingsService): Record<string, unknown> {
     sessionId: settings.assistantSessionId() ?? null,
     home: settings.assistantHome() ?? null,
     notifyMuted: settings.notifyMuted(),
+    persona: settings.persona() ?? null,
+    defaultPersona: DEFAULT_PERSONA,
+    personaMaxChars: PERSONA_MAX_CHARS,
   }
 }
 
@@ -205,6 +228,9 @@ async function handleAssistantRoute(
   }
   const home = await core.resolveAssistantHome(settings.assistantHome())
   await settings.setAssistantHome(home, 'system')
+  // Register the home as a real Workspace before creating the Session, so the
+  // client resolves an existing Workspace id instead of inferring one.
+  await ensureAssistantWorkspace(ctx, home, settings.displayName())
   const created = await core.createAssistantSession(home, settings.displayName())
   await settings.setAssistantSessionId(created.sessionId, 'system')
   jsonResponse(res, 200, { sessionId: created.sessionId, created: true, home })

@@ -28,6 +28,13 @@ export declare const ASSISTANT_HOME_KEY = "assistantHome";
  * narrate progress" setting most people actually want.
  */
 export declare const NOTIFY_MUTED_KEY = "notifyMuted";
+/**
+ * The user's own replacement for the assistant's behaviour text.
+ *
+ * Absent means "use the built-in default". The surrounding safety frame is not
+ * stored here, because it is not editable.
+ */
+export declare const PERSONA_KEY = "persona";
 /** Longest accepted name, in Unicode code points. */
 export declare const DISPLAY_NAME_MAX_CHARS = 24;
 /** Version counter bumping on every accepted change, so live surfaces can react. */
@@ -56,6 +63,12 @@ export interface SettingsService {
     notifyMuted(): boolean;
     /** Set the mute switch. */
     setNotifyMuted(muted: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    /** The user's own behaviour text, or `undefined` to use the built-in default. */
+    persona(): string | undefined;
+    /** Replace the behaviour text after validating it. */
+    setPersona(text: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    /** Drop the override, restoring the built-in default. */
+    clearPersona(updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     /** Every persisted setting row, newest namespace first. */
     list(): readonly SettingRecord[];
     /** Subscribe to accepted changes; returns the unsubscribe function. */
@@ -87,6 +100,9 @@ export declare class OneSettings implements SettingsService {
     setAssistantHome(path: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     notifyMuted(): boolean;
     setNotifyMuted(muted: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    persona(): string | undefined;
+    setPersona(text: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    clearPersona(updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     list(): readonly SettingRecord[];
     subscribe(listener: () => void): () => void;
     private readOverride;

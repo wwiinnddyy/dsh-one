@@ -10,6 +10,7 @@ import { registerOneCommand } from './core/command.js'
 import { registerOneTools } from './core/tools.js'
 import { acquireStore } from './store/index.js'
 import { OneSettings } from './core/settings.js'
+import { registerAssistantPersona } from './core/identity.js'
 import { registerPanelApi } from './panel/api.js'
 import { registerDshGoPanel } from './panel/dsh-go.js'
 
@@ -76,7 +77,9 @@ export async function apply(ctx: DshContextLike, config: OneConfig): Promise<voi
     const disposeDshGo = resolved.panelEnabled
       ? registerDshGoPanel(ctx, core, settings)
       : () => {}
+    const disposePersona = registerAssistantPersona(ctx, core, settings, resolved)
     return (): void => {
+      disposePersona()
       disposeDshGo()
       disposeApi()
       disposeCommand()

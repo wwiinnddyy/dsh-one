@@ -10,6 +10,7 @@ import type { DshContextLike, SettingRecord } from '../types.js'
 import type { OneStore } from '../store/store.js'
 import { OneError as OneErrorClass } from '../types.js'
 import { now as systemNow } from '../util.js'
+import { normalizePersona, PERSONA_MAX_CHARS } from './persona.js'
 
 /** Settings namespace owned by this module. */
 export const SETTINGS_NAMESPACE = 'one'
@@ -36,6 +37,14 @@ export const ASSISTANT_HOME_KEY = 'assistantHome'
  * narrate progress" setting most people actually want.
  */
 export const NOTIFY_MUTED_KEY = 'notifyMuted'
+
+/**
+ * The user's own replacement for the assistant's behaviour text.
+ *
+ * Absent means "use the built-in default". The surrounding safety frame is not
+ * stored here, because it is not editable.
+ */
+export const PERSONA_KEY = 'persona'
 
 /** Longest accepted name, in Unicode code points. */
 export const DISPLAY_NAME_MAX_CHARS = 24
@@ -66,6 +75,12 @@ export interface SettingsService {
   notifyMuted(): boolean
   /** Set the mute switch. */
   setNotifyMuted(muted: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>
+  /** The user's own behaviour text, or `undefined` to use the built-in default. */
+  persona(): string | undefined
+  /** Replace the behaviour text after validating it. */
+  setPersona(text: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>
+  /** Drop the override, restoring the built-in default. */
+  clearPersona(updatedBy?: SettingRecord['updatedBy']): Promise<void>
   /** Every persisted setting row, newest namespace first. */
   list(): readonly SettingRecord[]
   /** Subscribe to accepted changes; returns the unsubscribe function. */
@@ -204,6 +219,41 @@ export class OneSettings implements SettingsService {
       updatedAt: this.now(),
       updatedBy,
     })
+    this.emit()
+  }
+
+  persona(): string | undefined {
+    const record = this.store.getSetting(SETTINGS_NAMESPACE, PERSONA_KEY)
+    const value = record?.value
+    return value === undefined || value.trim() === '' ? undefined : value
+  }
+
+  async setPersona(text: string, updatedBy: SettingRecord['updatedBy'] = 'human'): Promise<void> {
+    let normalized: string
+    try {
+      normalized = normalizePersona(text)
+    } catch (error: unknown) {
+      const code = (error as { message?: string }).message ?? ''
+      if (code === 'one/persona-too-long') {
+        throw new OneErrorClass('one/persona-too-long', `the assistant prompt must stay under ${PERSONA_MAX_CHARS} characters`, {
+          max: PERSONA_MAX_CHARS,
+        })
+      }
+      throw new OneErrorClass('one/persona-empty', 'the assistant prompt cannot be blank', {})
+    }
+    await this.store.putSetting({
+      namespace: SETTINGS_NAMESPACE,
+      key: PERSONA_KEY,
+      value: normalized,
+      updatedAt: this.now(),
+      updatedBy,
+    })
+    this.emit()
+  }
+
+  async clearPersona(updatedBy: SettingRecord['updatedBy'] = 'human'): Promise<void> {
+    void updatedBy
+    await this.store.deleteSetting(SETTINGS_NAMESPACE, PERSONA_KEY)
     this.emit()
   }
 
