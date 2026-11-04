@@ -5,3 +5,5 @@ node_modules/
 .smoke-boot*
 .verify-*
 .npm-cache/
+
+.tmp-commit-msg.txt
