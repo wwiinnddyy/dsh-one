@@ -23,6 +23,8 @@ export const inject = ['tools', 'commands']
 export const Config: z<OneConfig> = z.object({
   displayName: z.string().min(1).max(24).default('鲸宝')
     .description('User-facing assistant name. A user-chosen override in settings wins over this default.'),
+  assistantHomeRoot: z.string().default('')
+    .description('Directory the assistant owns; "super-mind" is created inside it. A Session without a cwd cannot be opened without a Workspace prompt, so this must resolve to a real path.'),
   mode: z.union([z.const('observe'), z.const('active')]).default('observe')
     .description('Agent-initiated session tools: observe records only; active delivers and applies.'),
   allowAllSessions: z.boolean().default(false)

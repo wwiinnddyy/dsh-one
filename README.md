@@ -28,10 +28,10 @@ The plugin imports no DSH package at runtime. Host services are reached through 
 
 | Row | Package entry | Purpose | Default |
 |---|---|---|---|
-| `dsh-one` | `@wwiinnddyy/dsh-one` | registry, outbox, audit, `/one`, `one_sessions`/`one_send`/`one_model`, panel API | on |
-| `dsh-one-delegate` | `@wwiinnddyy/dsh-one/delegate` | task state machine, worker sessions, leases, slots, budgets, report tools | on, `taskMode: observe` |
-| `dsh-one-ingress` | `@wwiinnddyy/dsh-one/ingress` | GitHub webhook/poll, trigger/thread/eval/policy/mandate | **disabled** |
-| client half | `@wwiinnddyy/dsh-one/client` | assistant entry above the workspace list plus its own Settings tab | web profiles only |
+| `dsh-one` | `dsh-one` | registry, outbox, audit, `/one`, `one_sessions`/`one_send`/`one_model`, panel API | on |
+| `dsh-one-delegate` | `dsh-one/delegate` | task state machine, worker sessions, leases, slots, budgets, report tools | on, `taskMode: observe` |
+| `dsh-one-ingress` | `dsh-one/ingress` | GitHub webhook/poll, trigger/thread/eval/policy/mandate | **disabled** |
+| client half | `dsh-one/client` | assistant entry above the workspace list plus its own Settings tab | web profiles only |
 
 Each row has its own `Config` and its own `inject` list. The profile row's `disabled` flag is the only enable switch; there is no second `enabled` key inside a row. Ingress is disabled because it has no safe default: repository, actor, mention, and secret must be configured first.
 
@@ -89,7 +89,7 @@ DSH_HOME=/tmp/dsh-one-smoke dsh --profile smoke --no-open
 ## The assistant name
 
 The plugin's user-facing name is a preference, not a package identity. The
-package id stays `@wwiinnddyy/dsh-one`; only the label the user sees changes.
+package id stays `dsh-one`; only the label the user sees changes.
 
 - `displayName` in the core row is the deployment default (24 characters,
   `鲸宝` out of the box).
@@ -111,6 +111,7 @@ code points. An invalid name is rejected and the stored value is left alone.
 | Tool | Purpose |
 |---|---|
 | `one_sessions` | Read-only session list with workspace, state, trust, and model |
+| `one_workspaces` | Read-only Workspace map: sessions grouped by `cwd`, plus outstanding instructions |
 | `one_send` | Message another ordinary session; `requestId` is idempotent |
 | `one_model` | Select another session's model with catalog fallback |
 | `one_task_create` | Create a task; observed only when `taskMode: observe` |
@@ -118,8 +119,67 @@ code points. An invalid name is rejected and the stored value is left alone.
 | `one_task_status` | Read one task or list recent tasks |
 | `one_task_report` | Structured worker report: `progress`, `waiting`, `ready`, `blocked`, `failed`, `dropped`; `reportId` is idempotent |
 | `one_task_control` | `complete`, `cancel`, `retry` |
+| `one_assist` | Bounded autonomous loop: plan → dispatch → poll → one verdict |
 
 All tools declare standard JSON Schema parameters and output schemas (object-level `required` arrays), a cooperative `timeoutMs`, and a text `render`.
+
+## Autonomous assistant
+
+The assistant is an ordinary DSH session, not a private chat surface. Three
+properties make it behave like a coordinator rather than a chat box.
+
+### Its own home directory
+
+A Session without a `cwd` belongs to no Workspace, and the DSH client then
+refuses to open it until the user picks one. The assistant therefore owns a
+directory: `assistantHomeRoot` when set, otherwise `<DSH home>/super-mind`. The
+directory is created on demand, checked against `allowedWorkspaceRoots`, and
+persisted in settings so a restart reuses it.
+
+A stored assistant session is only reopened when it still exists **and** carries
+the recorded home as its `cwd`. A session created before the home existed is
+rebuilt on the next open, so an upgraded install never lands on a Workspace
+prompt.
+
+### Cross-Workspace command
+
+`one_workspaces` groups every non-subagent session by its canonical `cwd` and
+reports, per Workspace, its sessions, how many are running, and the outstanding
+instructions already sent. Grouping is derived on every call from the Host's own
+session list, so it cannot drift; a session without a `cwd` is reported as
+"no workspace" rather than guessed into a bucket.
+
+### Bounded autonomous loop
+
+`one_assist` takes one goal, plans it into tasks, dispatches them, polls until
+they are terminal, and reports one verdict:
+
+```text
+completed | partial | blocked | failed | exhausted | cancelled
+```
+
+Three bounds stop a run: `maxTasks` (default 5), `maxRounds` (default 30), and
+`deadlineMs` (default 10 minutes). Any of them ends the run as `exhausted` with
+an explanation instead of hanging.
+
+Completion is judged from **task states**, never from a self-assessment, so a
+model claiming success cannot turn a failed task into a success.
+
+### When it speaks
+
+The policy lives in `src/task/notify.ts` and admits exactly three reasons to
+interrupt:
+
+| Reason | Raised when |
+|---|---|
+| `done` | The whole plan finished |
+| `needs-you` | Something is blocked and only a person can unblock it |
+| `failed` | The run failed and cannot recover on its own |
+
+Progress, retries, and intermediate steps are deliberately not reasons to speak;
+they stay visible in the task list for anyone who looks. Quiet hours hold back a
+finished plan but never hold back `needs-you`, and notification selection is
+idempotent so a reported event cannot notify twice across recovery.
 
 ## Task runtime
 
@@ -307,6 +367,7 @@ The domain identifier must match DSH's `UNIT_NAME_RE` (`/^[a-z][a-z0-9_]*$/`), w
 | Key | Default | Meaning |
 |---|---|---|
 | `mode` | `observe` | Agent session tools record only; `active` delivers and applies |
+| `assistantHomeRoot` | `""` | Root for the assistant's own directory; empty derives `<DSH home>` |
 | `allowAllSessions` | `false` | Operate any non-subagent session |
 | `allowedSessionIds` | `[]` | Explicit trusted targets |
 | `allowedWorkspaceRoots` | `[]` | Allowed roots for agent operations |

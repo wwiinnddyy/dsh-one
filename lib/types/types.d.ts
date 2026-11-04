@@ -228,6 +228,12 @@ export type OneMode = 'observe' | 'active';
 export interface OneConfig {
     /** User-facing assistant name shown in every surface; the package id stays stable. */
     readonly displayName: string;
+    /**
+     * Directory the assistant owns, created on demand. A Session without a `cwd`
+     * belongs to no Workspace, and the DSH client then refuses to open it until
+     * the user picks one, so the assistant must always have a home.
+     */
+    readonly assistantHomeRoot: string;
     readonly mode: OneMode;
     readonly allowAllSessions: boolean;
     readonly allowedSessionIds: readonly string[];

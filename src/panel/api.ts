@@ -152,6 +152,8 @@ function settingsPayload(settings: SettingsService): Record<string, unknown> {
     defaultDisplayName: settings.defaultDisplayName(),
     overridden: settings.hasOverride(),
     sessionId: settings.assistantSessionId() ?? null,
+    home: settings.assistantHome() ?? null,
+    notifyMuted: settings.notifyMuted(),
   }
 }
 
@@ -192,15 +194,20 @@ async function handleAssistantRoute(
 
   const stored = settings.assistantSessionId()
   if (stored !== undefined) {
-    const live = await core.sessionExists(stored)
-    if (live) {
+    // A stored session is only reusable when it still exists *and* has a home.
+    // A session created before the home existed belongs to no Workspace, so
+    // opening it would make DSH demand a Workspace choice; rebuild instead.
+    const reusable = await core.assistantSessionReusable(stored)
+    if (reusable) {
       jsonResponse(res, 200, { sessionId: stored, created: false })
       return
     }
   }
-  const created = await core.createAssistantSession(settings.displayName())
+  const home = await core.resolveAssistantHome(settings.assistantHome())
+  await settings.setAssistantHome(home, 'system')
+  const created = await core.createAssistantSession(home, settings.displayName())
   await settings.setAssistantSessionId(created.sessionId, 'system')
-  jsonResponse(res, 200, { sessionId: created.sessionId, created: true })
+  jsonResponse(res, 200, { sessionId: created.sessionId, created: true, home })
 }
 
 /** Build the same overview the HTTP route serves; the DSH Go panel reads it directly. */

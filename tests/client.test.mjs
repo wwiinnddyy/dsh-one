@@ -44,7 +44,7 @@ function loadClient() {
   vm.createContext(sandbox)
   vm.runInContext(source, sandbox)
   assert.ok(registered, 'the client registers itself on the module loader')
-  assert.equal(registered.id, '@wwiinnddyy/dsh-one')
+  assert.equal(registered.id, 'dsh-one')
   const factory = registered.factory(name => {
     if (name === 'react') return React
     throw new Error(`unexpected require: ${name}`)

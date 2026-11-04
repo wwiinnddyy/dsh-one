@@ -20,6 +20,23 @@ export const DISPLAY_NAME_KEY = 'displayName'
 /** The assistant's real DSH session, so the entry opens a normal conversation. */
 export const ASSISTANT_SESSION_KEY = 'assistantSession'
 
+/**
+ * The assistant's home directory key.
+ *
+ * A session without a `cwd` belongs to no Workspace, and the DSH client then
+ * refuses to open it without asking the user to pick one. The assistant must
+ * therefore own a directory of its own.
+ */
+export const ASSISTANT_HOME_KEY = 'assistantHome'
+
+/**
+ * Whether the assistant may raise notifications.
+ *
+ * `false` mutes everything except blocks and failures, which is the "don't
+ * narrate progress" setting most people actually want.
+ */
+export const NOTIFY_MUTED_KEY = 'notifyMuted'
+
 /** Longest accepted name, in Unicode code points. */
 export const DISPLAY_NAME_MAX_CHARS = 24
 
@@ -41,6 +58,14 @@ export interface SettingsService {
   setAssistantSessionId(sessionId: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>
   /** Forget the assistant's session, so the next open creates a fresh one. */
   clearAssistantSessionId(updatedBy?: SettingRecord['updatedBy']): Promise<void>
+  /** The directory the assistant calls home; `undefined` until it is resolved. */
+  assistantHome(): string | undefined
+  /** Remember the resolved home directory, so a restart reuses the same one. */
+  setAssistantHome(path: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>
+  /** Whether progress narration is muted; blocks and failures still break through. */
+  notifyMuted(): boolean
+  /** Set the mute switch. */
+  setNotifyMuted(muted: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>
   /** Every persisted setting row, newest namespace first. */
   list(): readonly SettingRecord[]
   /** Subscribe to accepted changes; returns the unsubscribe function. */
@@ -142,6 +167,43 @@ export class OneSettings implements SettingsService {
   async clearAssistantSessionId(updatedBy: SettingRecord['updatedBy'] = 'human'): Promise<void> {
     void updatedBy
     await this.store.deleteSetting(SETTINGS_NAMESPACE, ASSISTANT_SESSION_KEY)
+    this.emit()
+  }
+
+  assistantHome(): string | undefined {
+    const record = this.store.getSetting(SETTINGS_NAMESPACE, ASSISTANT_HOME_KEY)
+    const value = record?.value.trim()
+    return value === undefined || value === '' ? undefined : value
+  }
+
+  async setAssistantHome(path: string, updatedBy: SettingRecord['updatedBy'] = 'human'): Promise<void> {
+    const value = path.trim()
+    if (value === '') {
+      throw new OneErrorClass('one/home-empty', 'the assistant home directory cannot be empty', {})
+    }
+    await this.store.putSetting({
+      namespace: SETTINGS_NAMESPACE,
+      key: ASSISTANT_HOME_KEY,
+      value,
+      updatedAt: this.now(),
+      updatedBy,
+    })
+    this.emit()
+  }
+
+  notifyMuted(): boolean {
+    const record = this.store.getSetting(SETTINGS_NAMESPACE, NOTIFY_MUTED_KEY)
+    return record?.value === 'true'
+  }
+
+  async setNotifyMuted(muted: boolean, updatedBy: SettingRecord['updatedBy'] = 'human'): Promise<void> {
+    await this.store.putSetting({
+      namespace: SETTINGS_NAMESPACE,
+      key: NOTIFY_MUTED_KEY,
+      value: muted ? 'true' : 'false',
+      updatedAt: this.now(),
+      updatedBy,
+    })
     this.emit()
   }
 

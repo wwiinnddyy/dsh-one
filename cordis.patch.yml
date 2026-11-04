@@ -5,7 +5,7 @@
 # configured before enabling it).
 - insert:
     - id: dsh-one
-      name: '@wwiinnddyy/dsh-one'
+      name: 'dsh-one'
       config:
         # Agent-initiated session tools record without delivering.
         mode: observe
@@ -22,7 +22,7 @@
         panelEnabled: true
 
     - id: dsh-one-delegate
-      name: '@wwiinnddyy/dsh-one/delegate'
+      name: 'dsh-one/delegate'
       config:
         # Agent task tools record intended work without creating tasks.
         # /one task add is the human path and is not gated by this mode.
@@ -49,7 +49,7 @@
     # No safe default: enable only after setting a webhook secret env var,
     # allowed repositories, allowed actors, a mention login, and a workspace.
     - id: dsh-one-ingress
-      name: '@wwiinnddyy/dsh-one/ingress'
+      name: 'dsh-one/ingress'
       disabled: true
       config:
         acceptMode: observe

@@ -10,6 +10,9 @@ import type {
 } from '../types.js'
 import { OneError } from '../types.js'
 import { asNumber, asRecord, asString, preview } from '../util.js'
+import { agentSessionId } from '../core/registry.js'
+import { runAssist } from './assist.js'
+import type { AssistLimits, AssistOutcome, AssistStep, AssistTaskPort } from './assist.js'
 
 const createParameters = {
   type: 'object',
@@ -106,7 +109,7 @@ const statusOutput = {
   required: ['items'],
 } as const
 
-/** Register the five task tools on the delegate row. */
+/** Register the five task tools plus the bounded autonomous loop. */
 export function registerTaskTools(ctx: DshContextLike, service: TaskService, timeoutMs: number): () => void {
   const disposers = [
     ctx.tools.register(createTool(service, timeoutMs)),
@@ -114,9 +117,144 @@ export function registerTaskTools(ctx: DshContextLike, service: TaskService, tim
     ctx.tools.register(statusTool(service, timeoutMs)),
     ctx.tools.register(reportTool(service, timeoutMs)),
     ctx.tools.register(controlTool(service, timeoutMs)),
+    ctx.tools.register(assistTool(service, timeoutMs)),
   ]
   return () => {
     for (const dispose of disposers.reverse()) dispose()
+  }
+}
+
+const assistParameters = {
+  type: 'object',
+  properties: {
+    goal: { type: 'string', description: 'The outcome to reach. The coordinator turns it into tasks.' },
+    steps: {
+      type: 'array',
+      description: 'Optional explicit plan. Omit to let the coordinator derive one from the goal.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          goal: { type: 'string' },
+          cwd: { type: 'string' },
+          priority: { type: 'number' },
+        },
+      },
+    },
+    maxTasks: { type: 'number', description: 'Create at most this many tasks (1-20, default 5).' },
+    maxRounds: { type: 'number', description: 'Poll at most this many rounds (1-200, default 30).' },
+    deadlineMs: { type: 'number', description: 'Wall-clock budget for the whole run; default 10 minutes.' },
+    pollIntervalMs: { type: 'number', description: 'Delay between polls; 0 disables sleeping (tests).' },
+  },
+  required: ['goal'],
+  additionalProperties: false,
+} as const
+
+const assistOutput = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    status: { type: 'string' },
+    rounds: { type: 'number' },
+    createdTasks: { type: 'array', items: { type: 'string' } },
+    completed: { type: 'array', items: { type: 'string' } },
+    failed: { type: 'array', items: { type: 'string' } },
+    blocked: { type: 'array', items: { type: 'string' } },
+    detail: { type: 'string' },
+  },
+  required: ['status', 'rounds', 'detail'],
+} as const
+
+/**
+ * Run one bounded plan and report a single verdict.
+ *
+ * This is the coordinator's entry point. It returns only after every task is
+ * terminal or a limit stopped the run, so a caller never has to guess whether
+ * work is still in flight.
+ */
+function assistTool(service: TaskService, timeoutMs: number): ToolDefinitionLike {
+  return {
+    name: 'one_assist',
+    description:
+      'Pursue one goal autonomously: plan it into tasks, dispatch them, poll until they are terminal, '
+      + 'then report one verdict. Bounded by maxTasks, maxRounds, and deadlineMs. '
+      + 'Completion is judged from task states, not self-assessment.',
+    parameters: assistParameters,
+    timeoutMs: Math.max(timeoutMs, 60_000),
+    output: {
+      schema: assistOutput,
+      render(_args, value) {
+        const result = value as AssistOutcome
+        const counts = [
+          `${result.completed.length} done`,
+          ...(result.failed.length === 0 ? [] : [`${result.failed.length} failed`]),
+          ...(result.blocked.length === 0 ? [] : [`${result.blocked.length} need a person`]),
+        ].join(', ')
+        return [{ type: 'text', text: `one_assist ${result.status} (${counts}, ${result.rounds} rounds): ${result.detail}` }]
+      },
+    },
+    async execute(args, exec) {
+      const record = asRecord(args) ?? {}
+      const goal = asString(record['goal'])
+      if (goal === undefined || goal.trim() === '') {
+        throw new OneError('one/invalid-argument', 'goal is required')
+      }
+      const rawSteps = record['steps']
+      const steps: AssistStep[] | undefined = Array.isArray(rawSteps)
+        ? rawSteps.flatMap(item => {
+          const step = asRecord(item)
+          const title = asString(step?.['title'])
+          const stepGoal = asString(step?.['goal'])
+          if (title === undefined || stepGoal === undefined) return []
+          const cwd = asString(step?.['cwd'])
+          const priority = asNumber(step?.['priority'])
+          return [{
+            title,
+            goal: stepGoal,
+            ...(cwd === undefined ? {} : { cwd }),
+            ...(priority === undefined ? {} : { priority }),
+          }]
+        })
+        : undefined
+      const limits: Partial<AssistLimits> = {
+        ...(asNumber(record['maxTasks']) === undefined ? {} : { maxTasks: asNumber(record['maxTasks']) as number }),
+        ...(asNumber(record['maxRounds']) === undefined ? {} : { maxRounds: asNumber(record['maxRounds']) as number }),
+        ...(asNumber(record['deadlineMs']) === undefined ? {} : { deadlineMs: asNumber(record['deadlineMs']) as number }),
+        ...(asNumber(record['pollIntervalMs']) === undefined
+          ? {}
+          : { pollIntervalMs: asNumber(record['pollIntervalMs']) as number }),
+      }
+      const agent = requireAgent(exec)
+      const callerSessionId = agentSessionId(agent)
+      const port: AssistTaskPort = {
+        async createTask(input, options) {
+          const created = await service.createTask(
+            { ...input, origin: options.origin ?? 'agent' },
+            {
+              source: 'tool',
+              ...(callerSessionId === undefined ? {} : { callerSessionId }),
+            },
+          )
+          return { task: { id: created.task.taskId, status: created.task.status } }
+        },
+        async assign(taskId, options) {
+          const result = await service.assign(taskId, options)
+          return { started: result.started }
+        },
+        getTask(taskId) {
+          const task = service.getTask(taskId)
+          return task === undefined ? undefined : { id: task.taskId, status: task.status }
+        },
+      }
+      return await runAssist(port, {
+        goal,
+        ...(steps === undefined ? {} : { steps }),
+        limits,
+        ...(callerSessionId === undefined ? {} : { callerSessionId }),
+        ...(exec.signal === undefined ? {} : { signal: exec.signal }),
+      })
+    },
   }
 }
 

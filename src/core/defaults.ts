@@ -6,6 +6,7 @@ import type { OneConfig } from '../types.js'
 export function defaultCoreConfig(): OneConfig {
   return {
     displayName: '鲸宝',
+    assistantHomeRoot: '',
     mode: 'active',
     allowAllSessions: true,
     allowedSessionIds: [],

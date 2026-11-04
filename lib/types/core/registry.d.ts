@@ -1,6 +1,9 @@
 /** dsh-one core: registry, access policy, outbox, audit, and host adapters. */
 import type { AgentLike, AuditRecord, DshContextLike, ManagedSessionRecord, OneConfig, OutboxRecord, SelectModelInput, SelectModelResult, SendInput, SendResult, SessionView } from '../types.js';
 import { OneStore } from '../store/store.js';
+import type { WorkspaceOverview } from './workspaces.js';
+/** Directory name the assistant owns under the configured home root. */
+export declare const ASSISTANT_HOME_DIRNAME = "super-mind";
 export interface OneCoreHooks {
     readonly now?: () => number;
     readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -83,22 +86,44 @@ export declare class OneCore {
     private viewFromRecord;
     private resultOf;
     /**
-     * Whether the host still lists one ordinary session. Used before returning a
-     * stored assistant session id, because opening an id the host dropped shows an
-     * empty conversation instead of failing loudly.
+     * Whether a stored assistant session can be reopened as-is.
+     *
+     * It must exist, be an ordinary session, and already carry a `cwd` that lies
+     * inside the assistant home. A session created before the home existed has no
+     * `cwd`, belongs to no Workspace, and would make the client prompt for one, so
+     * it is not reusable and is rebuilt on the next open.
      */
+    assistantSessionReusable(sessionId: string): Promise<boolean>;
+    /** Whether the host still lists one ordinary session. */
     sessionExists(sessionId: string): Promise<boolean>;
+    /**
+     * Resolve the assistant's home directory, creating it when absent.
+     *
+     * The assistant must own a directory because a Session without a `cwd`
+     * belongs to no Workspace, and the DSH client then forces the user to pick
+     * one before it will open the conversation. Preferences win, so a deployment
+     * can keep the assistant anywhere; the default is `<dsh home>/super-mind`.
+     */
+    resolveAssistantHome(preferred?: string): Promise<string>;
     /**
      * Create the assistant's own session.
      *
      * The assistant is an ordinary DSH session, not a private chat surface: it is
      * created through the same controller every other session uses, so the
      * conversation, history, model selection, and tool access all behave normally.
-     * The host assigns the id; the title is only a label for the session list.
+     * It carries a `cwd` so the client can group it under a Workspace and open it
+     * without prompting for one.
      */
-    createAssistantSession(title: string): Promise<{
+    createAssistantSession(home: string, title: string): Promise<{
         readonly sessionId: string;
     }>;
+    /**
+     * The cross-Workspace picture the assistant reasons over.
+     *
+     * Derived on every call from the Host's own session list plus this plugin's
+     * outbox, so it never drifts from what the Host believes.
+     */
+    workspaceOverview(): Promise<WorkspaceOverview>;
     /** Append one audit row. Shared by the core, task, and intake modules. */
     audit(input: {
         action: string;

@@ -1,5 +1,5 @@
 {
-  "name": "@wwiinnddyy/dsh-one",
+  "name": "dsh-one",
   "version": "0.2.0",
   "description": "DSH One: session registry, delegated task runtime, source intake, and a read-only panel for DeepSeek Harness.",
   "license": "GPL-3.0",

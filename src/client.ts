@@ -52,6 +52,10 @@ interface SettingsView {
   readonly defaultDisplayName: string
   readonly overridden: boolean
   readonly sessionId: string | null
+  /** The assistant's own directory; `null` until it is first resolved. */
+  readonly home?: string | null
+  /** Whether progress narration is muted. */
+  readonly notifyMuted?: boolean
 }
 
 interface AssistantView {
@@ -139,7 +143,7 @@ async function ensureAssistant(): Promise<string> {
 }
 
 window.__ModuleLoader__.load({
-  id: '@wwiinnddyy/dsh-one',
+  id: 'dsh-one',
   factory(require) {
     const React = require('react') as ReactLike
 
@@ -308,6 +312,22 @@ window.__ModuleLoader__.load({
             + '并且可以像任何会话一样跨工作区工作。'),
           React.createElement('p', { key: 'u' },
             hasSession ? '助手会话已创建，可直接从左侧入口打开。' : '助手会话会在你第一次点开入口时自动创建。'),
+        ]),
+        React.createElement('div', { key: 'home', className: 'one-field' }, [
+          React.createElement('label', { key: 'l' }, '助手工作区'),
+          React.createElement('p', { key: 'd' },
+            '助手有自己固定的目录，所以点开它就是一次普通对话，不会让你挑工作区。'),
+          React.createElement('p', { key: 'u' }, view?.home ?? '首次打开时自动创建。'),
+        ]),
+        React.createElement('div', { key: 'mute', className: 'one-field' }, [
+          React.createElement('label', { key: 'l' }, '汇报方式'),
+          React.createElement('p', { key: 'd' },
+            '助手只在三种时候开口：计划完成、需要你决定、执行失败。'
+            + '其余进度只写进任务记录，不打扰你。'),
+          React.createElement('p', { key: 'u' },
+            view?.notifyMuted === true
+              ? '当前：静默进度，仅保留「需要你决定」和「失败」提醒。'
+              : '当前：计划完成时也会提醒。'),
         ]),
         ...(error === undefined ? [] : [React.createElement('div', { key: 'e', className: 'one-error' }, error)]),
         ...(notice === undefined ? [] : [React.createElement('div', { key: 'n', className: 'one-hint' }, notice)]),
