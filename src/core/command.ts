@@ -1,9 +1,10 @@
-/** `/one` human command: sessions, send, model, status, audit. It never opens a model turn. */
+/** `/one` human command: sessions, send, model, status, audit, tasks. It never opens a model turn. */
 
-import type { CommandDefinitionLike, CommandInvocationLike, CommandResultLike, DshContextLike, OneConfig } from './types.js'
-import { OneError } from './types.js'
-import { OneCore, agentSessionId } from './core.js'
-import { classifyError, parseModelRoute, splitFirstToken } from './util.js'
+import type { CommandDefinitionLike, CommandInvocationLike, CommandResultLike, DshContextLike, OneConfig } from '../types.js'
+import { OneError } from '../types.js'
+import { OneCore, agentSessionId } from './registry.js'
+import { classifyError, parseModelRoute, splitFirstToken } from '../util.js'
+import { handleTask, handleTasks } from '../task/commands.js'
 
 const USAGE = [
   'Usage:',
@@ -13,18 +14,21 @@ const USAGE = [
   '  /one model <sessionId> <provider>/<model> [reasoningEffort]',
   '  /one status <requestId>                  read the outbox row',
   '  /one audit [limit]                       recent audit rows',
+  '  /one tasks [limit]                       recent delegated tasks',
+  '  /one task add <title> | <goal> [--cwd <path>] [--priority <n>] [--budget <n>]',
+  '  /one task assign|show|retry|cancel|complete <taskId>',
   '  /one help',
 ].join('\n')
 
 /** Register the single `/one` command. */
-export function registerOneCommand(ctx: DshContextLike, core: OneCore, config: OneConfig): () => void {
+export function registerOneCommand(ctx: DshContextLike, core: OneCore, _config: OneConfig): () => void {
   const definition: CommandDefinitionLike = {
     name: 'one',
-    description: 'DSH One: list sessions, send to another session, or select its model',
-    input: { hint: 'sessions | send | model | status | audit | help' },
+    description: 'DSH One: sessions, cross-session sends, models, and delegated tasks',
+    input: { hint: 'sessions | send | model | status | audit | tasks | task | help' },
     async handler(invocation: CommandInvocationLike): Promise<CommandResultLike> {
       try {
-        return await handle(invocation, core)
+        return await handle(invocation, core, ctx)
       } catch (error: unknown) {
         if (error instanceof OneError) return { kind: 'error', text: `${error.code}: ${error.message}` }
         const classified = classifyError(error)
@@ -36,7 +40,7 @@ export function registerOneCommand(ctx: DshContextLike, core: OneCore, config: O
   return dispose
 }
 
-async function handle(invocation: CommandInvocationLike, core: OneCore): Promise<CommandResultLike> {
+async function handle(invocation: CommandInvocationLike, core: OneCore, ctx: DshContextLike): Promise<CommandResultLike> {
   const { token, rest } = splitFirstToken(invocation.rawInput)
   switch (token) {
     case '':
@@ -52,6 +56,10 @@ async function handle(invocation: CommandInvocationLike, core: OneCore): Promise
       return handleStatus(rest, core)
     case 'audit':
       return handleAudit(rest, core)
+    case 'tasks':
+      return handleTasks(rest, ctx)
+    case 'task':
+      return handleTask(rest, invocation, ctx)
     default:
       return { kind: 'error', text: `unknown /one action "${token}"\n${USAGE}` }
   }

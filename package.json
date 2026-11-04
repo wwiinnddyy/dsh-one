@@ -1,15 +1,28 @@
 {
   "name": "@wwiinnddyy/dsh-one",
-  "version": "0.1.0",
-  "description": "DSH One: a resident DSH plugin for session registry, cross-session messaging, and per-session model selection.",
+  "version": "0.2.0",
+  "description": "DSH One: session registry, delegated task runtime, source intake, and a read-only panel for DeepSeek Harness.",
   "license": "GPL-3.0",
   "type": "module",
+  "icon": "icon.svg",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
+    },
+    "./delegate": {
+      "types": "./lib/types/delegate.d.ts",
+      "default": "./lib/delegate.js"
+    },
+    "./ingress": {
+      "types": "./lib/types/ingress.d.ts",
+      "default": "./lib/ingress.js"
+    },
+    "./client": {
+      "types": "./lib/types/client.d.ts",
+      "default": "./lib/client.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
@@ -19,44 +32,73 @@
     "src",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "icon.svg",
+    "locale"
   ],
   "engines": {
-    "node": ">=24.9.0"
+    "node": ">=24.9.0",
+    "dsh": ">=0.2.1-rc.4 <0.3.0-0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node scripts/clean-lib.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "dshGo": {
+    "v": 1,
+    "title": {
+      "zh": "One",
+      "en": "One"
+    },
+    "icon": "bot",
+    "contributes": {
+      "composer.strip": [
+        {
+          "id": "one",
+          "icon": "pending",
+          "panel": "one"
+        }
+      ],
+      "panels": [
+        {
+          "id": "one",
+          "title": {
+            "zh": "任务",
+            "en": "Tasks"
+          },
+          "icon": "todo",
+          "placement": [
+            "session.tab",
+            "features"
+          ]
+        }
+      ]
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.5",
     "zod": "^4.6.0"
   },
   "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.5",
-    "@deepseek-ai/dsh-agent": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-commands": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-session": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.4"
-  },
-  "peerDependenciesMeta": {
-    "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/dsh-agent": { "optional": true },
-    "@deepseek-ai/dsh-commands": { "optional": true },
-    "@deepseek-ai/dsh-session": { "optional": true },
-    "@deepseek-ai/dsh-storage-domain": { "optional": true },
-    "@deepseek-ai/dsh-tools": { "optional": true }
+    "@deepseek-ai/schemastery": "^3.18.5"
   },
   "repository": {
     "type": "git",

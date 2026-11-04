@@ -1,19 +1,17 @@
-# dsh-one bundle patch: mounts the plugin into a DSH profile.
+# dsh-one bundle patch: mounts the three rows into a DSH profile.
 #
-# Install with `dsh plugin --profile web add .` from this repository.
+# The core row is always on. Delegation is observe-only by default. Ingress is
+# disabled because it has no safe default (repository, actor, and secret must be
+# configured before enabling it).
 - insert:
     - id: dsh-one
       name: '@wwiinnddyy/dsh-one'
       config:
-        # Observe records model-initiated sends without delivering them.
-        # Set to active only after reviewing the audit trail.
+        # Agent-initiated session tools record without delivering.
         mode: observe
-        # By default only the calling session and explicitly registered
-        # sessions are operable. Set true only on a trusted single-user host.
         allowAllSessions: false
         allowedSessionIds: []
         allowedWorkspaceRoots: []
-        # Managed sessions are created when their registered id is missing.
         allowSessionCreation: true
         maxSendAttempts: 3
         retryDelayMs: 1000
@@ -21,3 +19,80 @@
         commandTimeoutMs: 30000
         modelFallback: true
         auditLimit: 1000
+        panelEnabled: true
+
+    - id: dsh-one-delegate
+      name: '@wwiinnddyy/dsh-one/delegate'
+      config:
+        # Agent task tools record intended work without creating tasks.
+        # /one task add is the human path and is not gated by this mode.
+        taskMode: observe
+        maxWorkers: 4
+        workspaceMode: lease
+        leaseTtlMs: 120000
+        # Set this before delegating source work; /one task add can name --cwd.
+        defaultWorkspaceRoot: ''
+        workerAgentPreset: ''
+        workerPermissionPreset: ''
+        workerToolAllow: []
+        workerToolDeny:
+          - subagent
+          - workflow
+          - schedule
+          - job
+        tokenBudget: 200000
+        retryLimit: 3
+        reportMaxChars: 4000
+        commandTimeoutMs: 60000
+        defaultTaskPriority: 100
+
+    # No safe default: enable only after setting a webhook secret env var,
+    # allowed repositories, allowed actors, a mention login, and a workspace.
+    - id: dsh-one-ingress
+      name: '@wwiinnddyy/dsh-one/ingress'
+      disabled: true
+      config:
+        acceptMode: observe
+        maxBodyBytes: 1000000
+        confirmReply: true
+        taskWorkspaceRoot: ''
+        taskBudgetTokens: 200000
+        policyStrength: standard
+        policyScope: '*'
+        policyRules:
+          - id: actionable
+            text: The request asks for concrete repository work with an observable outcome.
+            required: true
+          - id: safe
+            text: The request contains no credentials, secret exfiltration, or destructive shell instructions.
+            required: true
+            denyPattern: '(api[_-]?key|secret|password|token)\s*[:=]|rm\s+-rf|curl\s+.*\|\s*(?:sh|bash)|git\s+push\s+--force'
+        assessment:
+          enabled: false
+          provider: ''
+          model: ''
+          maxTokens: 1024
+          timeoutMs: 20000
+        github:
+          enabled: false
+          webhookPath: /one/webhook/github
+          secretEnv: DSH_ONE_GITHUB_WEBHOOK_SECRET
+          tokenEnv: DSH_ONE_GITHUB_TOKEN
+          repositories: []
+          allowedActors: []
+          botLogins:
+            - 'dependabot[bot]'
+            - 'github-actions[bot]'
+          requireMention: true
+          mentionLogin: ''
+          eventTypes:
+            - issues
+            - issue_comment
+            - pull_request
+            - pull_request_review_comment
+          pollEnabled: false
+          pollIntervalMs: 60000
+          apiBaseUrl: https://api.github.com
+          # GitHub cannot send the DSH host credential. Enable only behind a
+          # proxy that injects it; the HMAC signature is always required.
+          requireHostAuth: false

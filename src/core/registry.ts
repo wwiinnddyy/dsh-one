@@ -16,9 +16,9 @@ import type {
   SessionControllerLike,
   SessionSummary,
   SessionView,
-} from './types.js'
-import { OneError as OneErrorClass } from './types.js'
-import { OneStore } from './store.js'
+} from '../types.js'
+import { OneError as OneErrorClass } from '../types.js'
+import { OneStore } from '../store/store.js'
 import {
   asString,
   classifyError,
@@ -31,7 +31,7 @@ import {
   preview,
   REQUEST_ID_PATTERN,
   sleep as systemSleep,
-} from './util.js'
+} from '../util.js'
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
 
@@ -279,6 +279,48 @@ export class OneCore {
     })
     return record
   }
+
+  /**
+   * Register a session this plugin created for a worker as trusted. Workers
+   * are ordinary sessions; automatic registration keeps the default
+   * allowlist posture without requiring a human `/one sessions add`.
+   */
+  async trustWorkerSession(input: { sessionId: string; cwd?: string; title?: string }): Promise<ManagedSessionRecord> {
+    this.assertSessionId(input.sessionId)
+    const at = this.now()
+    const existing = this.store.getSession(input.sessionId)
+    const record: ManagedSessionRecord = {
+      sessionId: input.sessionId,
+      ...((input.title ?? existing?.title) === undefined ? {} : { title: input.title ?? existing?.title as string }),
+      ...((input.cwd ?? existing?.cwd) === undefined ? {} : { cwd: input.cwd ?? existing?.cwd as string }),
+      ...(existing?.workspaceId === undefined ? {} : { workspaceId: existing.workspaceId }),
+      ...(existing?.model === undefined ? {} : { model: existing.model }),
+      status: 'active',
+      trusted: true,
+      createdAt: existing?.createdAt ?? at,
+      updatedAt: at,
+      lastSeenAt: at,
+    }
+    await this.store.putSession(record)
+    await this.audit({
+      action: 'worker_session_registered',
+      targetSessionId: input.sessionId,
+      outcome: 'ok',
+      detail: input.cwd === undefined ? 'worker session' : preview(input.cwd),
+    })
+    return record
+  }
+
+  get storeRef(): OneStore {
+    return this.store
+  }
+
+  /** Whether a workspace is inside the configured allowlist (an empty list allows all). */
+  isWorkspaceAllowed(cwd: string): boolean {
+    return this.config.allowedWorkspaceRoots.length === 0
+      || this.config.allowedWorkspaceRoots.some(root => pathWithin(root, cwd))
+  }
+
 
   /** Send a user message to another ordinary session, with retries and idempotency. */
   async send(input: SendInput): Promise<SendResult> {
@@ -620,7 +662,7 @@ export class OneCore {
   }
 
   async dispose(): Promise<void> {
-    await this.store.close()
+    // The plugin row owns the shared store lease; the registry owns no resource.
   }
 
   private requireController(): SessionControllerLike {
@@ -728,10 +770,12 @@ export class OneCore {
     }
   }
 
-  private async audit(input: {
+  /** Append one audit row. Shared by the core, task, and intake modules. */
+  async audit(input: {
     action: string
     actorSessionId?: string
     targetSessionId?: string
+    taskId?: string
     requestId?: string
     outcome: 'ok' | 'error' | 'observed'
     detail?: string
@@ -742,6 +786,7 @@ export class OneCore {
       action: input.action,
       ...(input.actorSessionId === undefined ? {} : { actorSessionId: input.actorSessionId }),
       ...(input.targetSessionId === undefined ? {} : { targetSessionId: input.targetSessionId }),
+      ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
       ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
       outcome: input.outcome,
       ...(input.detail === undefined ? {} : { detail: input.detail }),

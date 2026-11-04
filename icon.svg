@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="DSH One">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#0b1220"/>
+  <path d="M18 42V22h8l12 13V22" fill="none" stroke="#7dd3fc" stroke-width="4" stroke-linejoin="round"/>
+  <circle cx="46" cy="40" r="4" fill="#f472b6"/>
+</svg>

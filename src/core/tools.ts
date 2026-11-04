@@ -1,9 +1,9 @@
 /** The `one_sessions`, `one_send`, and `one_model` model-facing tools. */
 
-import type { AgentLike, DshContextLike, OneConfig, SelectModelResult, SendResult, SessionView, ToolDefinitionLike, ToolRunContextLike } from './types.js'
-import { OneError } from './types.js'
-import { OneCore, agentSessionId } from './core.js'
-import { asBoolean, asRecord, asString } from './util.js'
+import type { AgentLike, DshContextLike, OneConfig, SelectModelResult, SendResult, SessionView, ToolDefinitionLike, ToolRunContextLike } from '../types.js'
+import { OneError } from '../types.js'
+import { OneCore, agentSessionId } from './registry.js'
+import { asBoolean, asRecord, asString } from '../util.js'
 
 const sessionsParameters = {
   type: 'object',
@@ -26,50 +26,53 @@ const sessionsOutput = {
   properties: {
     items: {
       type: 'array',
-      required: true,
       items: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          sessionId: { type: 'string', required: true },
+          sessionId: { type: 'string' },
           title: { type: 'string' },
           cwd: { type: 'string' },
-          running: { type: 'boolean', required: true },
-          blank: { type: 'boolean', required: true },
-          subagent: { type: 'boolean', required: true },
-          registered: { type: 'boolean', required: true },
-          trusted: { type: 'boolean', required: true },
+          running: { type: 'boolean' },
+          blank: { type: 'boolean' },
+          subagent: { type: 'boolean' },
+          registered: { type: 'boolean' },
+          trusted: { type: 'boolean' },
           model: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              provider: { type: 'string', required: true },
-              model: { type: 'string', required: true },
+              provider: { type: 'string' },
+              model: { type: 'string' },
               reasoningEffort: { type: 'string' },
             },
+            required: ['provider', 'model'],
           },
           status: { type: 'string', enum: ['active', 'missing', 'error'] },
           lastSeenAt: { type: 'integer' },
         },
+        required: ['sessionId', 'running', 'blank', 'subagent', 'registered', 'trusted'],
       },
     },
-    degraded: { type: 'boolean', required: true },
+    degraded: { type: 'boolean' },
     reconciledAt: { type: 'integer' },
     error: { type: 'string' },
   },
+  required: ['items', 'degraded'],
 } as const
 
 const sendParameters = {
   type: 'object',
   properties: {
-    sessionId: { type: 'string', required: true, description: 'Target ordinary DSH session id.' },
-    text: { type: 'string', required: true, description: 'User message text delivered to the target session.' },
+    sessionId: { type: 'string', description: 'Target ordinary DSH session id.' },
+    text: { type: 'string', description: 'User message text delivered to the target session.' },
     requestId: {
       type: 'string',
       description: 'Optional idempotency key. Reusing it returns the earlier outcome instead of sending twice.',
     },
     mode: { type: 'string', enum: ['queue', 'steer'], description: 'queue for the next turn, steer for the nearest step.' },
   },
+  required: ['sessionId', 'text'],
   additionalProperties: false,
 } as const
 
@@ -77,24 +80,26 @@ const sendOutput = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    requestId: { type: 'string', required: true },
-    targetSessionId: { type: 'string', required: true },
-    status: { type: 'string', required: true, enum: ['pending', 'sending', 'sent', 'observed', 'failed', 'unknown', 'cancelled'] },
-    accepted: { type: 'boolean', required: true },
-    observed: { type: 'boolean', required: true },
-    attempts: { type: 'integer', required: true },
+    requestId: { type: 'string' },
+    targetSessionId: { type: 'string' },
+    status: { type: 'string', enum: ['pending', 'sending', 'sent', 'observed', 'failed', 'unknown', 'cancelled'] },
+    accepted: { type: 'boolean' },
+    observed: { type: 'boolean' },
+    attempts: { type: 'integer' },
     error: { type: 'string' },
   },
+  required: ['requestId', 'targetSessionId', 'status', 'accepted', 'observed', 'attempts'],
 } as const
 
 const modelParameters = {
   type: 'object',
   properties: {
-    sessionId: { type: 'string', required: true, description: 'Target ordinary DSH session id.' },
-    provider: { type: 'string', required: true, description: 'Provider route id from session/modelCatalog.' },
-    model: { type: 'string', required: true, description: 'Model id from the selected provider.' },
+    sessionId: { type: 'string', description: 'Target ordinary DSH session id.' },
+    provider: { type: 'string', description: 'Provider route id from session/modelCatalog.' },
+    model: { type: 'string', description: 'Model id from the selected provider.' },
     reasoningEffort: { type: 'string', description: 'Optional reasoning effort id advertised by the model.' },
   },
+  required: ['sessionId', 'provider', 'model'],
   additionalProperties: false,
 } as const
 
@@ -102,15 +107,16 @@ const modelOutput = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    sessionId: { type: 'string', required: true },
-    provider: { type: 'string', required: true },
-    model: { type: 'string', required: true },
+    sessionId: { type: 'string' },
+    provider: { type: 'string' },
+    model: { type: 'string' },
     reasoningEffort: { type: 'string' },
-    selected: { type: 'boolean', required: true },
-    observed: { type: 'boolean', required: true },
-    fallbackUsed: { type: 'boolean', required: true },
+    selected: { type: 'boolean' },
+    observed: { type: 'boolean' },
+    fallbackUsed: { type: 'boolean' },
     error: { type: 'string' },
   },
+  required: ['sessionId', 'provider', 'model', 'selected', 'observed', 'fallbackUsed'],
 } as const
 
 /** Register the three tools. */

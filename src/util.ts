@@ -1,6 +1,6 @@
-/** Small, dependency-free helpers shared by the host half. */
+/** Small, dependency-free helpers shared by dsh-one's modules. */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 export const now = (): number => Date.now()
@@ -29,7 +29,18 @@ export const sleep = async (ms: number, signal?: AbortSignal): Promise<void> => 
 
 export const nextId = (prefix: string): string => `${prefix}-${randomUUID()}`
 
+/** Short stable hash used for policy and idempotency fingerprints. */
+export const hashOf = (value: unknown): string =>
+  createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
+
 export const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
+
+/** Deterministic request identity for one task input. */
+export const taskInputRequestId = (taskId: string, inputId: string): string => `one:${taskId}:${inputId}`
+
+/** Deterministic task id for one source event so a replay cannot create a second task. */
+export const sourceTaskId = (sourceId: string, externalId: string): string =>
+  `task-${hashOf({ sourceId, externalId })}`
 
 export interface ClassifiedError {
   readonly code: string
@@ -93,6 +104,10 @@ export function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+export function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
 export function asBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
 }
@@ -112,7 +127,13 @@ export function pathWithin(root: string, target: string): boolean {
   return !diff.split(sep).includes('..')
 }
 
-/** Truncate free text before it enters an audit row. */
+/** Canonical workspace key used by leases; case-insensitive on Windows. */
+export function canonicalWorkspace(cwd: string): string {
+  const resolved = resolve(cwd)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
+/** Truncate free text before it enters an audit or panel row. */
 export function preview(text: string, limit = 120): string {
   const single = text.replace(/\s+/gu, ' ').trim()
   return single.length <= limit ? single : `${single.slice(0, limit - 1)}…`
@@ -137,4 +158,14 @@ export function splitFirstToken(text: string): { token: string; rest: string } {
   const match = /^(\S+)(?:\s+|$)([\s\S]*)$/u.exec(trimmed)
   if (match === null) return { token: trimmed, rest: '' }
   return { token: match[1] ?? '', rest: match[2] ?? '' }
+}
+
+/** Parse a JSON object body; returns undefined for malformed input. */
+export function parseJsonObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(text)
+    return isRecord(value) ? value : undefined
+  } catch {
+    return undefined
+  }
 }
