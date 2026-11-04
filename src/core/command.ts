@@ -31,7 +31,10 @@ export function registerOneCommand(
 ): () => void {
   const definition: CommandDefinitionLike = {
     name: 'one',
-    description: 'DSH One: name, sessions, cross-session sends, models, and delegated tasks',
+    // The command name stays `one` (documented API) and the copy stays
+    // name-free: this string is evaluated once at registration, so embedding
+    // the display name here would go stale the moment the user renames it.
+    description: 'Assistant name, sessions, cross-session sends, models, and delegated tasks',
     input: { hint: 'name | sessions | send | model | status | audit | tasks | task | help' },
     async handler(invocation: CommandInvocationLike): Promise<CommandResultLike> {
       try {
