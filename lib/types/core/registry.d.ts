@@ -1,6 +1,6 @@
 /** dsh-one core: registry, access policy, outbox, audit, and host adapters. */
-import type { AgentLike, AuditRecord, DshContextLike, ManagedSessionRecord, OneConfig, OutboxRecord, SelectModelInput, SelectModelResult, SendInput, SendResult, SessionView } from './types.js';
-import { OneStore } from './store.js';
+import type { AgentLike, AuditRecord, DshContextLike, ManagedSessionRecord, OneConfig, OutboxRecord, SelectModelInput, SelectModelResult, SendInput, SendResult, SessionView } from '../types.js';
+import { OneStore } from '../store/store.js';
 export interface OneCoreHooks {
     readonly now?: () => number;
     readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -44,6 +44,19 @@ export declare class OneCore {
         cwd?: string;
         title?: string;
     }): Promise<ManagedSessionRecord>;
+    /**
+     * Register a session this plugin created for a worker as trusted. Workers
+     * are ordinary sessions; automatic registration keeps the default
+     * allowlist posture without requiring a human `/one sessions add`.
+     */
+    trustWorkerSession(input: {
+        sessionId: string;
+        cwd?: string;
+        title?: string;
+    }): Promise<ManagedSessionRecord>;
+    get storeRef(): OneStore;
+    /** Whether a workspace is inside the configured allowlist (an empty list allows all). */
+    isWorkspaceAllowed(cwd: string): boolean;
     /** Send a user message to another ordinary session, with retries and idempotency. */
     send(input: SendInput): Promise<SendResult>;
     private executeSend;
@@ -63,7 +76,16 @@ export declare class OneCore {
     private viewFromSummary;
     private viewFromRecord;
     private resultOf;
-    private audit;
+    /** Append one audit row. Shared by the core, task, and intake modules. */
+    audit(input: {
+        action: string;
+        actorSessionId?: string;
+        targetSessionId?: string;
+        taskId?: string;
+        requestId?: string;
+        outcome: 'ok' | 'error' | 'observed';
+        detail?: string;
+    }): Promise<void>;
 }
 /** Resolve the agent's session id from the minimal Agent surface. */
 export declare function agentSessionId(agent: AgentLike | undefined): string | undefined;
