@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# YAML is parsed byte-for-byte by the loader and the packaging tests:
+# check it out with LF even when core.autocrlf is enabled on Windows.
+*.yml text eol=lf
