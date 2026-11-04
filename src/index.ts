@@ -56,6 +56,9 @@ export async function apply(ctx: DshContextLike, config: OneConfig): Promise<voi
   const lease = await acquireStore(ctx, resolved)
   const core = new OneCore(ctx, resolved, lease.store)
   await core.start()
+  ctx.inject?.(['sessionController'], () => {
+    void core.start()
+  })
   const provide = ctx.provide?.('oneCore', core)
   ctx.effect(() => {
     const disposeTools = registerOneTools(ctx, core, resolved)

@@ -42,7 +42,7 @@ export interface OneCoreHooks {
 
 /** Process-local, in-process implementation behind commands and tools. */
 export class OneCore {
-  private readonly controller: SessionControllerLike | undefined
+  private readonly ctx: DshContextLike
   private readonly store: OneStore
   private readonly config: OneConfig
   private readonly now: () => number
@@ -50,6 +50,7 @@ export class OneCore {
   private readonly inflight = new Map<string, Promise<SendResult>>()
   private startError: string | undefined
   private reconciledAt: number | undefined
+  private starting: Promise<void> | undefined
 
   constructor(
     ctx: DshContextLike,
@@ -57,24 +58,36 @@ export class OneCore {
     store: OneStore,
     hooks: OneCoreHooks = {},
   ) {
+    this.ctx = ctx
     this.config = config
     this.store = store
-    this.controller = ctx.get('sessionController') as SessionControllerLike | undefined
     this.now = hooks.now ?? systemNow
     this.sleeper = hooks.sleep ?? systemSleep
   }
 
-  /** Reconcile the registry once the host has settled its Session service. */
+  private get controller(): SessionControllerLike | undefined {
+    return this.ctx.get('sessionController') as SessionControllerLike | undefined
+  }
+
+  /**
+   * Reconcile the registry once the host has settled its Session service.
+   * The service may appear after this plugin row activates, so the caller
+   * invokes this again from `ctx.inject(['sessionController'], ...)`.
+   */
   async start(): Promise<void> {
-    if (this.controller === undefined) {
-      this.startError = 'sessionController is unavailable; cross-session actions will fail'
-      return
-    }
-    try {
-      await this.reconcile()
-    } catch (error: unknown) {
-      this.startError = `registry reconciliation failed: ${classifyError(error).message}`
-    }
+    if (this.controller === undefined) return
+    if (this.starting !== undefined) return this.starting
+    this.starting = (async () => {
+      try {
+        await this.reconcile()
+        this.startError = undefined
+      } catch (error: unknown) {
+        this.startError = `registry reconciliation failed: ${classifyError(error).message}`
+      } finally {
+        this.starting = undefined
+      }
+    })()
+    await this.starting
   }
 
   get degraded(): boolean {
@@ -82,7 +95,9 @@ export class OneCore {
   }
 
   get lastError(): string | undefined {
-    return this.startError
+    return this.startError ?? (this.controller === undefined
+      ? 'sessionController is unavailable; cross-session actions will fail'
+      : undefined)
   }
 
   get lastReconciledAt(): number | undefined {
@@ -171,7 +186,7 @@ export class OneCore {
         items: [...records.values()].map(record => this.viewFromRecord(record)),
         degraded: this.degraded,
         ...(this.reconciledAt === undefined ? {} : { reconciledAt: this.reconciledAt }),
-        error: this.startError,
+        error: this.lastError,
       }
     }
     const signal = this.timedSignal()
@@ -200,7 +215,7 @@ export class OneCore {
       items: items.sort((a, b) => Number(b.running) - Number(a.running) || a.sessionId.localeCompare(b.sessionId)),
       degraded: this.degraded,
       ...(this.reconciledAt === undefined ? {} : { reconciledAt: this.reconciledAt }),
-      ...(this.startError === undefined ? {} : { error: this.startError }),
+      ...(this.lastError === undefined ? {} : { error: this.lastError }),
     }
   }
 

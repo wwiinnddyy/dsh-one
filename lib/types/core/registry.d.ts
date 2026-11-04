@@ -7,7 +7,7 @@ export interface OneCoreHooks {
 }
 /** Process-local, in-process implementation behind commands and tools. */
 export declare class OneCore {
-    private readonly controller;
+    private readonly ctx;
     private readonly store;
     private readonly config;
     private readonly now;
@@ -15,8 +15,14 @@ export declare class OneCore {
     private readonly inflight;
     private startError;
     private reconciledAt;
+    private starting;
     constructor(ctx: DshContextLike, config: OneConfig, store: OneStore, hooks?: OneCoreHooks);
-    /** Reconcile the registry once the host has settled its Session service. */
+    private get controller();
+    /**
+     * Reconcile the registry once the host has settled its Session service.
+     * The service may appear after this plugin row activates, so the caller
+     * invokes this again from `ctx.inject(['sessionController'], ...)`.
+     */
     start(): Promise<void>;
     get degraded(): boolean;
     get lastError(): string | undefined;
