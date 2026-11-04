@@ -93,7 +93,7 @@ export declare class OneCore {
      * `cwd`, belongs to no Workspace, and would make the client prompt for one, so
      * it is not reusable and is rebuilt on the next open.
      */
-    assistantSessionReusable(sessionId: string): Promise<boolean>;
+    assistantSessionReusable(sessionId: string, home: string): Promise<boolean>;
     /** Whether the host still lists one ordinary session. */
     sessionExists(sessionId: string): Promise<boolean>;
     /**
@@ -117,6 +117,18 @@ export declare class OneCore {
     createAssistantSession(home: string, title: string): Promise<{
         readonly sessionId: string;
     }>;
+    /**
+     * Make the assistant introduce itself in its own conversation.
+     *
+     * An empty Session looks exactly like a new chat, which is indistinguishable
+     * from "the plugin did nothing". One queued user-role kickoff inside the
+     * assistant's own Session makes the assistant answer with its identity, so the
+     * first thing the user sees is a conversation that has already started.
+     *
+     * Failure is swallowed on purpose: a greeting is a nicety, and a Host that
+     * refuses the prompt must not stop the entry from opening.
+     */
+    greetAssistantSession(sessionId: string, displayName: string): Promise<void>;
     /**
      * The cross-Workspace picture the assistant reasons over.
      *
