@@ -223,7 +223,7 @@ function AssistantLauncher(props: { readonly ctxRef: ClientContextLike }): React
     started.current = true
     const open = async (): Promise<void> => {
       try {
-        const value = await jsonFetch('/one/api/assistant', { method: 'POST' }) as { sessionId: string }
+        const value = await jsonFetch('/one/api/assistant?create=1') as { sessionId: string }
         const uiWorkspace = props.ctxRef.get?.('uiWorkspace') as UiWorkspaceLike | undefined
         if (uiWorkspace === undefined) {
           setError('当前环境没有会话导航服务')
@@ -288,11 +288,7 @@ function Workbench(props: { readonly ctxRef: ClientContextLike }): ReactElementL
   const stop = async (ticketId: string): Promise<void> => {
     setNotice(undefined)
     try {
-      await jsonFetch('/one/api/tickets/stop', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ticketId }),
-      })
+      await jsonFetch('/one/api/tickets/stop?ticketId=' + encodeURIComponent(ticketId))
     } catch (error: unknown) {
       setNotice(String(error))
     }
@@ -377,18 +373,16 @@ function SettingsForm(): ReactElementLike {
   const save = async (): Promise<void> => {
     setNotice(undefined)
     try {
-      await jsonFetch('/one/api/settings', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ displayName: name, persona: persona.trim() === '' ? null : persona }),
-      })
+      const query = 'displayName=' + encodeURIComponent(name)
+        + '&persona=' + encodeURIComponent(persona.trim())
+      await jsonFetch('/one/api/settings?' + query)
       setNotice('已保存')
     } catch (error: unknown) {
       setNotice(String(error))
     }
   }
   const reset = async (): Promise<void> => {
-    await jsonFetch('/one/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ displayName: loaded?.defaultDisplayName ?? '鲸宝', persona: null }) })
+    await jsonFetch('/one/api/settings?resetName=1&resetPersona=1')
     setNotice('已恢复默认')
   }
   return React.createElement('div', { className: 'one-page' }, [

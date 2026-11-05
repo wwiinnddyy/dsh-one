@@ -1,8 +1,10 @@
 /**
  * The workbench HTTP surface.
  *
- * Read routes serve the panel; write routes go through the same Engine and
- * Settings services as the tools, so a click and a model call cannot diverge.
+ * The host's plugin web server only serves GET/HEAD (any other method is
+ * rejected with 405 before a plugin handler runs), so writes travel as GET
+ * query parameters. They still go through the same Engine and Settings
+ * services as the tools, so a click and a model call cannot diverge.
  */
 
 import type {
@@ -15,12 +17,6 @@ import type {
 import type { OneRuntime } from './runtime.js'
 import { stageOf } from '../core/stage.js'
 import { workspaceKey, workspaceLabel } from './paths.js'
-
-const MAX_BODY_BYTES = 1_000_000
-
-function methodOf(req: HttpRequestLike): string {
-  return (req.method ?? 'GET').toUpperCase()
-}
 
 export function registerPanelApi(ctx: DshContextLike, runtime: OneRuntime): () => void {
   const server = ctx.get('webServer') as WebServerLike | undefined
@@ -114,10 +110,8 @@ function tickets(runtime: OneRuntime, res: HttpResponseLike): void {
 }
 
 async function stopTicket(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
-  if (methodOf(req) !== 'POST') return json(res, 405, { error: 'method not allowed' })
-  const body = parseBody(await readBody(req))
-  const ticketId = typeof body['ticketId'] === 'string' ? body['ticketId'] : undefined
-  if (ticketId === undefined) return json(res, 400, { error: 'ticketId is required' })
+  const ticketId = urlOf(req).searchParams.get('ticketId')
+  if (ticketId === null || ticketId.trim() === '') return json(res, 400, { error: 'ticketId is required' })
   try {
     const ticket = await runtime.engine.stop({ ticketId, reason: 'stopped from the workbench' })
     json(res, 200, { ticketId: ticket.ticketId, status: ticket.status })
@@ -141,8 +135,8 @@ function workspaces(runtime: OneRuntime, res: HttpResponseLike): void {
 }
 
 async function assistant(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
-  if (methodOf(req) !== 'GET' && methodOf(req) !== 'POST') return json(res, 405, { error: 'method not allowed' })
-  if (methodOf(req) === 'GET') {
+  const create = urlOf(req).searchParams.get('create') === '1'
+  if (!create) {
     const sessionId = runtime.assistantSessionId()
     return json(res, 200, { sessionId: sessionId ?? null })
   }
@@ -155,14 +149,23 @@ async function assistant(runtime: OneRuntime, req: HttpRequestLike, res: HttpRes
 }
 
 async function settings(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
-  if (methodOf(req) === 'GET') return json(res, 200, settingsPayload(runtime))
-  if (methodOf(req) !== 'PUT') return json(res, 405, { error: 'method not allowed' })
-  const body = parseBody(await readBody(req))
+  const query = urlOf(req).searchParams
   try {
-    if (typeof body['displayName'] === 'string') await runtime.settings.setDisplayName(body['displayName'])
-    if (body['persona'] === null || body['persona'] === '') await runtime.settings.clearPersona()
-    else if (typeof body['persona'] === 'string') await runtime.settings.setPersona(body['persona'])
-    if (typeof body['notifyMuted'] === 'boolean') await runtime.settings.setNotifyMuted(body['notifyMuted'])
+    if (query.get('resetName') === '1') {
+      await runtime.settings.resetDisplayName()
+    } else if (query.get('displayName') !== null) {
+      await runtime.settings.setDisplayName(query.get('displayName') ?? '')
+    }
+    if (query.get('resetPersona') === '1') {
+      await runtime.settings.clearPersona()
+    } else if (query.get('persona') !== null) {
+      const persona = query.get('persona') ?? ''
+      if (persona.trim() === '') await runtime.settings.clearPersona()
+      else await runtime.settings.setPersona(persona)
+    }
+    if (query.get('notifyMuted') !== null) {
+      await runtime.settings.setNotifyMuted(query.get('notifyMuted') === 'true')
+    }
     json(res, 200, settingsPayload(runtime))
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
@@ -189,37 +192,6 @@ function json(res: HttpResponseLike, status: number, body: unknown): void {
     'content-length': String(Buffer.byteLength(text)),
   })
   res.end(text)
-}
-
-async function readBody(req: HttpRequestLike): Promise<string> {
-  return await new Promise<string>((resolvePromise, reject) => {
-    const chunks: Buffer[] = []
-    let size = 0
-    req.on('data', (chunk: unknown) => {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
-      size += buffer.length
-      if (size > MAX_BODY_BYTES) {
-        reject(new Error('request body is too large'))
-        return
-      }
-      chunks.push(buffer)
-    })
-    req.on('end', () => resolvePromise(Buffer.concat(chunks).toString('utf8')))
-    req.on('error', (error: unknown) => reject(error instanceof Error ? error : new Error(String(error))))
-    req.resume?.()
-  })
-}
-
-function parseBody(text: string): Record<string, unknown> {
-  if (text.trim() === '') return {}
-  try {
-    const value: unknown = JSON.parse(text)
-    return typeof value === 'object' && value !== null && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : {}
-  } catch {
-    return {}
-  }
 }
 
 export function urlOf(req: HttpRequestLike): URL {

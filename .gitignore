@@ -7,3 +7,5 @@ lib/
 .verify-*
 .npm-cache/
 .tmp-commit-msg.txt
+
+.webserver-ref.js

@@ -6,8 +6,9 @@ import { join } from 'node:path'
 import { createEnv, makeConnection, makeReq, makeResponse } from './harness.mjs'
 
 async function request(env, path, options = {}) {
-  const handler = env.webServer.routes.get(path)
-  assert.ok(handler, `route ${path} is registered`)
+  const routePath = path.split('?')[0]
+  const handler = env.webServer.routes.get(routePath)
+  assert.ok(handler, `route ${routePath} is registered`)
   const res = makeResponse()
   await handler(makeReq({ url: path, ...options }), res)
   return res
@@ -34,10 +35,7 @@ test('settings can be read and updated through the panel route', async () => {
   try {
     const before = (await request(env, '/one/api/settings')).json()
     assert.equal(before.displayName, '鲸宝')
-    const updated = await request(env, '/one/api/settings', {
-      method: 'PUT',
-      body: JSON.stringify({ displayName: '小七' }),
-    })
+    const updated = await request(env, '/one/api/settings?displayName=' + encodeURIComponent('小七'))
     assert.equal(updated.status, 200)
     assert.equal(updated.json().displayName, '小七')
     assert.equal(env.runtime.assistantName(), '小七')
@@ -51,13 +49,13 @@ test('the assistant route creates a real session and reuses it', async () => {
   const env = await createEnv({ config: { assistantHomeRoot: root } })
   try {
     // DSH may hand the handler a lowercase method; it must still route.
-    const created = (await request(env, '/one/api/assistant', { method: 'post' })).json()
+    const created = (await request(env, '/one/api/assistant?create=1')).json()
     assert.equal(typeof created.sessionId, 'string')
     assert.equal(created.created, true)
-    const again = (await request(env, '/one/api/assistant', { method: 'POST' })).json()
+    const again = (await request(env, '/one/api/assistant?create=1')).json()
     assert.equal(again.created, false)
     assert.equal(again.sessionId, created.sessionId)
-    const read = (await request(env, '/one/api/assistant', { method: 'get' })).json()
+    const read = (await request(env, '/one/api/assistant')).json()
     assert.equal(read.sessionId, created.sessionId)
   } finally {
     await env.dispose()
@@ -80,10 +78,7 @@ test('tickets can be stopped through the panel route', async () => {
   const env = await createEnv()
   try {
     const ticket = await env.runtime.engine.createTicket({ title: 'A', goal: 'B' })
-    const res = await request(env, '/one/api/tickets/stop', {
-      method: 'POST',
-      body: JSON.stringify({ ticketId: ticket.ticketId }),
-    })
+    const res = await request(env, '/one/api/tickets/stop?ticketId=' + encodeURIComponent(ticket.ticketId))
     assert.equal(res.status, 200)
     assert.equal(env.runtime.engine.view(ticket.ticketId).status, 'ended')
   } finally {
