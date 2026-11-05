@@ -1,14 +1,17 @@
-# dsh-one bundle patch: the new base (0.3).
+# dsh-one bundle patch: the 0.3 row and its settings.
 #
-# Only the core row is mounted for now. Later phases add the executor, the
-# sources and the workbench client as separate rows.
+# The core row mounts the Engine, the Effects queue, the Executor and the
+# workbench client. The client is delivered through `dsh.client` in package.json,
+# not as a separate row.
 - insert:
     - id: dsh-one
       name: 'dsh-one'
       config:
         displayName: 鲸宝
-        # Agent-initiated actions record without executing until the executor
-        # phase is wired. Set to active once the executor exists.
-        mode: observe
+        # The assistant is the user's proxy; its tools execute. Set observe to
+        # record intended work without creating tickets.
+        mode: active
         assistantHomeRoot: ''
         allowedWorkspaceRoots: []
+        maxWorkers: 4
+        commandTimeoutMs: 30000

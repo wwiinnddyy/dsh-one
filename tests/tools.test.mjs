@@ -112,3 +112,60 @@ test('a workspace outside the allowed roots is refused', async () => {
     await env.dispose()
   }
 })
+
+/** Walk a JSON schema and record every `type` that is not a single string. */
+function collectTypeArrays(node, path, failures) {
+  if (node === null || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    node.forEach((item, index) => collectTypeArrays(item, `${path}[${index}]`, failures))
+    return
+  }
+  if ('type' in node && typeof node.type !== 'string') failures.push(`${path}.type`)
+  for (const [key, value] of Object.entries(node)) {
+    collectTypeArrays(value, `${path}.${key}`, failures)
+  }
+}
+
+test('tool schemas use only the schema subset the host accepts', async () => {
+  const env = await createEnv()
+  try {
+    const failures = []
+    for (const tool of env.tools.values()) {
+      collectTypeArrays(tool.parameters, `${tool.name}.parameters`, failures)
+      collectTypeArrays(tool.output.schema, `${tool.name}.output`, failures)
+    }
+    assert.deepEqual(failures, [])
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('observe mode refuses mutations instead of half-executing them', async () => {
+  const env = await createEnv({ config: { mode: 'observe' } })
+  try {
+    await assert.rejects(
+      call(env.tools.get('one_work'), { action: 'create', title: 'A', goal: 'B' }),
+      /observe mode/u,
+    )
+    assert.equal(env.runtime.engine.list().length, 0)
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('a goal groups the tickets created with its id', async () => {
+  const env = await createEnv()
+  try {
+    const goal = await call(env.tools.get('one_work'), { action: 'create_goal', title: 'Ship it' })
+    assert.equal(typeof goal.goalId, 'string')
+    const ticket = await call(env.tools.get('one_work'), {
+      action: 'create', title: 'A', goal: 'B', goalId: goal.goalId,
+    })
+    assert.equal(ticket.status, 'open')
+    const view = env.runtime.engine.goalView(goal.goalId)
+    assert.equal(view.total, 1)
+    assert.equal(view.open, 1)
+  } finally {
+    await env.dispose()
+  }
+})

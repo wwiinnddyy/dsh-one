@@ -41,6 +41,7 @@ const workOutput = {
     path: { type: 'string' },
     workspaceId: { type: 'string' },
     sessionId: { type: 'string' },
+    goalId: { type: 'string' },
     sent: { type: 'boolean' },
   },
   required: [],
@@ -51,7 +52,7 @@ const workParameters = {
   properties: {
     action: {
       type: 'string',
-      enum: ['create', 'assign', 'report', 'answer', 'complete', 'stop', 'create_workspace', 'message'],
+      enum: ['create', 'create_goal', 'assign', 'report', 'answer', 'complete', 'stop', 'create_workspace', 'message'],
       description: 'What to do.',
     },
     ticketId: { type: 'string', description: 'Existing ticket for assign/report/answer/complete/stop.' },
@@ -193,6 +194,9 @@ function workTool(runtime: OneRuntime): ToolDefinitionLike {
         if (typeof row['path'] === 'string') {
           return [{ type: 'text', text: `one_work workspace: ${row['path']}` }]
         }
+        if (typeof row['goalId'] === 'string') {
+          return [{ type: 'text', text: `one_work goal: ${row['goalId']}` }]
+        }
         return [{ type: 'text', text: `one_work ${String(row['action'] ?? 'done')}` }]
       },
     },
@@ -200,9 +204,21 @@ function workTool(runtime: OneRuntime): ToolDefinitionLike {
       const record = asRecord(args) ?? {}
       const action = asString(record['action'])
       if (action === undefined) throw new Error('one/invalid-argument: action is required')
+      if (runtime.config.mode === 'observe') {
+        throw new Error('one/observe-mode: the deployment is in observe mode; no work is changed or delivered')
+      }
       const agent = requireAgent(exec)
       const ticketId = asString(record['ticketId'])
       switch (action) {
+        case 'create_goal': {
+          const title = asString(record['title'])
+          if (title === undefined) throw new Error('one/invalid-argument: title is required')
+          const goal = await runtime.engine.createGoal({
+            title,
+            ...(asString(record['cwd']) === undefined ? {} : { cwd: asString(record['cwd']) as string }),
+          })
+          return { goalId: goal.goalId, title: goal.title }
+        }
         case 'create': {
           const title = asString(record['title'])
           const goal = asString(record['goal'])
@@ -210,15 +226,17 @@ function workTool(runtime: OneRuntime): ToolDefinitionLike {
             throw new Error('one/invalid-argument: title and goal are required')
           }
           const assistant = isAssistant(runtime, agent)
+          const goalId = asString(record['goalId'])
           const created = await runtime.engine.createTicket({
             title,
             goal,
             ...(asString(record['cwd']) === undefined ? {} : { cwd: asString(record['cwd']) as string }),
-            ...(asString(record['goalId']) === undefined ? {} : { goalId: asString(record['goalId']) as string }),
+            ...(goalId === undefined ? {} : { goalId }),
             ...(ticketId === undefined ? {} : { ticketId }),
             origin: assistant ? 'assistant' : 'agent',
             ...(assistant ? { assistantLabel: senderLabelFor(runtime.assistantName()) } : {}),
           })
+          if (goalId !== undefined) await runtime.engine.attachToGoal(goalId, created.ticketId)
           return toJson(created)
         }
         case 'create_workspace': {
@@ -303,6 +321,11 @@ function workTool(runtime: OneRuntime): ToolDefinitionLike {
           if (sessionId === undefined || text === undefined) {
             throw new Error('one/invalid-argument: sessionId and text are required')
           }
+          if (!await runtime.sessions.exists(sessionId)) {
+            throw new Error(`one/session-not-found: session "${sessionId}" is not in session/list`)
+          }
+          const managed = runtime.store.getSession(sessionId)
+          if (managed?.cwd !== undefined) runtime.workspace.assertAllowed(managed.cwd)
           const assistant = isAssistant(runtime, agent)
           const delivered = assistant ? `${senderLabelFor(runtime.assistantName())}\n\n${text}` : text
           await runtime.executor.enqueueReply(sessionId, delivered)

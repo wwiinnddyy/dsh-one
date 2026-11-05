@@ -25,7 +25,7 @@ export const Config: z<OneConfig> = z.object({
     .description('User-facing assistant name.'),
   assistantHomeRoot: z.string().default('')
     .description('Root for folders the assistant creates; empty derives <DSH home>/super-mind.'),
-  mode: z.union([z.const('observe'), z.const('active')]).default('observe')
+  mode: z.union([z.const('observe'), z.const('active')]).default('active')
     .description('Agent-initiated actions: observe records only; active executes.'),
   allowedWorkspaceRoots: z.array(String).default([])
     .description('Workspace roots the assistant may touch; empty allows all.'),

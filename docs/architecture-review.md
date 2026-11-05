@@ -389,10 +389,23 @@ src/
 - `src/app/tools.ts` — `one_work` / `one_status`
 - 30 个测试全绿
 
+### 实施进度（0.3.0-alpha.0）
+
+| 阶段 | 状态 | 产出 |
+|---|---|---|
+| A 持久化 | ✅ | `dsh_one_v3` 域、`Store`、Engine 异步化、38 个测试 |
+| B Executor | ✅ | Session 适配器、Worker 派发、槽位、恢复、Effects 接线 |
+| C 助手 | ✅ | 身份注入、设置、`/one` 命令、助手会话 |
+| D 客户端 | ✅ | 助手/工作台入口、身份条、工作台面板、HTTP API |
+| E 收尾 | ✅ | README、打包、构建验证 |
+
+累计测试：58+ 个（`npm test` 全绿）。
+
 ### 仍需决定（下一轮）
 
 - **Watchdog / 主动触发**：本轮先做健康检查，LLM Watchdog 放到后面的阶段。
-- **持久化后端**：绑定 `ctx.storageDomain` 还是自管 SQLite。
+- **持久化后端**：已绑定 `ctx.storageDomain`（域 `dsh_one_v3`），内存兜底保留。
+- **Source 协议**：当前 Source 只有"聊天 + 人类命令"；GitHub/IM 作为后续 Source 插件。
 
 ---
 

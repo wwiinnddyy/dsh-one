@@ -17,9 +17,9 @@ test('the package exports the host row and its patch', () => {
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
 })
 
-test('the bundle patch mounts one core row in observe mode', () => {
+test('the bundle patch mounts the core row in active mode', () => {
   assert.match(patch, /id: dsh-one\n/u)
-  assert.match(patch, /mode: observe\n/u)
+  assert.match(patch, /mode: active\n/u)
   assert.doesNotMatch(patch, /dsh-one-ingress/u)
 })
 
