@@ -1,0 +1,56 @@
+{
+  "name": "dsh-one",
+  "version": "0.3.0-alpha.0",
+  "description": "DSH One: a workspace assistant built as a Router/Worker super-agent for DeepSeek Harness.",
+  "license": "GPL-3.0",
+  "type": "module",
+  "icon": "icon.svg",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "icon.svg"
+  ],
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": ">=0.2.1-rc.4 <0.3.0-0"
+  },
+  "scripts": {
+    "clean": "node scripts/clean-lib.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "zod": "^4.6.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wwiinnddyy/dsh-one.git"
+  }
+}

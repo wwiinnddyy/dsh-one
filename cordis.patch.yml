@@ -1,0 +1,14 @@
+# dsh-one bundle patch: the new base (0.3).
+#
+# Only the core row is mounted for now. Later phases add the executor, the
+# sources and the workbench client as separate rows.
+- insert:
+    - id: dsh-one
+      name: 'dsh-one'
+      config:
+        displayName: 鲸宝
+        # Agent-initiated actions record without executing until the executor
+        # phase is wired. Set to active once the executor exists.
+        mode: observe
+        assistantHomeRoot: ''
+        allowedWorkspaceRoots: []

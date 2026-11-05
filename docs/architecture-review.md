@@ -333,9 +333,11 @@ src/
 
 ### Phase 4 — Router / Worker 分离（4–5 天）
 - `Sessions` 支持 router/executor 两种角色（模型、preset、prompt 分离）。
-- `Executor` 接管 worker 会话：每 Ticket 一个目录（可配置 prepare 命令）、槽位、后台 jobs/subagents、30 分钟规则。
+- `Executor` 接管 worker 会话：**Worker 由 agent 选择**——复用某个工作区里已有的会话，或让助手选文件夹新建工作区/会话；会话自己的 cwd 就是隔离单位。
+- 会话级串行：同一个 worker 会话同一时间只接一个 Assignment；不同会话天然并行。
+- 后台 jobs/subagents 跟踪、空闲回收、worker 崩溃恢复。
 - 助手会话（Router）只保留路由/评估/回复工具。
-- 验收：两个 Ticket 并行写同一仓库不互相阻塞（worktree 模式）；worker 崩溃自动恢复；Router 不被长命令卡住。
+- 验收：助手能把两个工单派给两个不同工作区的会话并行推进；worker 崩溃自动恢复；Router 不被长命令卡住。
 
 ### Phase 5 — Source 协议 + GitHub 迁移（3–4 天）
 - 定义 `SourceKind`（identity/config/schema/scope/channel/threadContext/find/policy/health）。
@@ -367,16 +369,30 @@ src/
 
 ---
 
-## 8. 需要你拍板的问题
+## 8. 已定决策（2026-11-05）
 
-1. **产品定位**：dsh-one 是"通用工作区助手"还是"某个仓库的 GitHub 代理"？
-   - 这决定 Source 的优先级：通用 → 先把 chat 做成 Source；GitHub 代理 → 先做 GitHub Source。
-2. **工作单元命名**：接受把 `Task` 统一改名为 `Ticket`（工单）吗？还是保留 Task 作为对外名字、只改内部类型？
-3. **Worker 隔离方式**：继续"共享 cwd + 租约"（改动小、并行差），还是"每 Ticket 独立 worktree/目录"（改动大、并行好、更接近参考实现）？
-4. **Effects 是否本轮就做**：我建议是（P0，所有可靠性收益都在这）。如果只做 UI 重构，可以推迟。
-5. **客户端形态**：保持"DSH 原生会话 + 插件 chrome"（普通会话零影响），还是做一个独立工作台面板（更像参考实现的 Web panel）？
-6. **对外工具兼容**：`one_task_*` / `one_run_*` 是否保持旧名？（我建议保持，内部统一。）
-7. **Watchdog / 主动触发**：本轮只做健康检查，还是连 LLM Watchdog 一起做？
+1. **产品定位**：**通用工作区助手**。聊天是主入口，可服务任意工作区；GitHub、IM 都只是可插拔 Source。
+2. **Worker 来源**：**由 agent 自己决定**。可以复用其他工作区里已有的会话，也可以自己选文件夹新建工作区/会话。会话自己的 cwd 就是隔离单位，不需要 worktree。
+3. **目标层**：**保留目标，但降为纯分组/投影**，不再拥有调度器、状态机和重试。
+4. **Effects**：**本轮就做，P0**。launch / delivery / relay / notice / reply / assessment 六类统一进持久队列。
+5. **客户端形态**：**聊天为主 + 完整工作台面板**。聊天保持 DSH 原生会话与插件 chrome，另加概览/工单/来源/设置页面。
+6. **对外工具面**：**收敛成统一入口工具**。初版为 `one_work`（create/assign/report/answer/complete/stop）+ `one_status`。
+7. **执行方式**：**删库重建**。旧实现已归档到 git tag `legacy-0.2.0`，新基座从零开始。
+
+### 基座 v0.3.0-alpha.0 已落地
+
+- `src/core/model.ts` — Ticket / Goal / Assignment / Report / Attention
+- `src/core/stage.ts` — Ticket 阶段表
+- `src/core/engine.ts` — 同步、单写者、每个命令一次写入
+- `src/app/effects.ts` — 持久副作用队列（去重、退避、顺序）
+- `src/app/store.ts` — 内存版端口（下一阶段绑定 `ctx.storageDomain`）
+- `src/app/tools.ts` — `one_work` / `one_status`
+- 30 个测试全绿
+
+### 仍需决定（下一轮）
+
+- **Watchdog / 主动触发**：本轮先做健康检查，LLM Watchdog 放到后面的阶段。
+- **持久化后端**：绑定 `ctx.storageDomain` 还是自管 SQLite。
 
 ---
 
