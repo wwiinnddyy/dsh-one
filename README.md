@@ -64,7 +64,7 @@ npm run typecheck
 |---|---|---|
 | `displayName` | `鲸宝` | 助手名字；用户可在设置里覆盖 |
 | `assistantHomeRoot` | `""` | 助手自己的目录根；空则 `<DSH home>/super-mind` |
-| `mode` | `observe` | `active` 才真正执行工具动作；bundle patch 默认 `active` |
+| `mode` | `active` | `active` 才真正执行工具动作；设为 `observe` 则只拒绝并记录 |
 | `allowedWorkspaceRoots` | `[]` | 允许的工作区根；空表示全部 |
 | `maxWorkers` | `4` | 并发执行会话数 |
 | `commandTimeoutMs` | `30000` | 单次会话操作超时 |

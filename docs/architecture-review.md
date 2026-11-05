@@ -387,7 +387,7 @@ src/
 - `src/app/effects.ts` — 持久副作用队列（去重、退避、顺序）
 - `src/app/store.ts` — 内存版端口（下一阶段绑定 `ctx.storageDomain`）
 - `src/app/tools.ts` — `one_work` / `one_status`
-- 30 个测试全绿
+- 63 个测试全绿
 
 ### 实施进度（0.3.0-alpha.0）
 
@@ -399,7 +399,7 @@ src/
 | D 客户端 | ✅ | 助手/工作台入口、身份条、工作台面板、HTTP API |
 | E 收尾 | ✅ | README、打包、构建验证 |
 
-累计测试：58+ 个（`npm test` 全绿）。
+累计测试：63 个（`npm test` 全绿）。
 
 ### 仍需决定（下一轮）
 
