@@ -1,9 +1,9 @@
 node_modules/
+lib/
 *.tgz
 .DS_Store
 .smoke-home/
 .smoke-boot*
 .verify-*
 .npm-cache/
-
 .tmp-commit-msg.txt
