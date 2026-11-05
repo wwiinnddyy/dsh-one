@@ -95,6 +95,7 @@ export interface Store extends TicketRepository, GoalRepository, EffectStore {
   listAudit(limit?: number): readonly AuditRecord[]
   getChat(id: string): ChatRecord | undefined
   putChat(record: ChatRecord): Promise<void>
+  deleteChat(id: string): Promise<boolean>
   listChat(limit?: number): readonly ChatRecord[]
   chatBySessionSeq(seq: number): ChatRecord | undefined
 }
@@ -188,6 +189,7 @@ export class MemoryStore implements Store {
 
   getChat(id: string): ChatRecord | undefined { return this.chat.get(id) }
   async putChat(record: ChatRecord): Promise<void> { await this.chat.put(record.id, record) }
+  async deleteChat(id: string): Promise<boolean> { return await this.chat.delete(id) }
   listChat(limit = 200): readonly ChatRecord[] {
     return chatRows([...this.chat.entries()].map(([, value]) => value)).slice(-limit)
   }
@@ -251,6 +253,7 @@ export class DomainStore implements Store {
 
   getChat(id: string): ChatRecord | undefined { return this.table<ChatRecord>('chat').get(id) }
   async putChat(record: ChatRecord): Promise<void> { await this.table<ChatRecord>('chat').put(record.id, record) }
+  async deleteChat(id: string): Promise<boolean> { return await this.table<ChatRecord>('chat').delete(id) }
   listChat(limit = 200): readonly ChatRecord[] {
     return chatRows([...this.table<ChatRecord>('chat').entries()].map(([, value]) => value)).slice(-limit)
   }

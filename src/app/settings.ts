@@ -13,6 +13,13 @@ export const SETTINGS_NAMESPACE = 'one'
 const DISPLAY_NAME_KEY = 'displayName'
 const PERSONA_KEY = 'persona'
 const NOTIFY_MUTED_KEY = 'notifyMuted'
+const AVATAR_KEY = 'avatar'
+
+/** Largest accepted avatar data URL, in characters (roughly 300 KB decoded). */
+export const AVATAR_MAX_CHARS = 400_000
+
+/** Only raster data URLs are accepted; SVG can carry script, so it is refused. */
+const AVATAR_PATTERN = /^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/u
 
 export const DISPLAY_NAME_MAX_CHARS = 24
 
@@ -83,6 +90,33 @@ export class SettingsService {
   async resetDisplayName(): Promise<string> {
     await this.store.deleteSetting(SETTINGS_NAMESPACE, DISPLAY_NAME_KEY)
     return this.config.displayName
+  }
+
+  /** A raster data URL, or undefined to use the name's initial. */
+  avatar(): string | undefined {
+    const value = this.store.getSetting(SETTINGS_NAMESPACE, AVATAR_KEY)?.value
+    return value === undefined || !AVATAR_PATTERN.test(value) ? undefined : value
+  }
+
+  async setAvatar(dataUrl: string): Promise<void> {
+    const value = dataUrl.trim()
+    if (value.length > AVATAR_MAX_CHARS) {
+      throw new UserError('one/avatar-too-large', 'the avatar image is too large', { max: AVATAR_MAX_CHARS })
+    }
+    if (!AVATAR_PATTERN.test(value)) {
+      throw new UserError('one/avatar-invalid', 'the avatar must be a PNG, JPEG, WebP or GIF data URL', {})
+    }
+    await this.store.putSetting({
+      namespace: SETTINGS_NAMESPACE,
+      key: AVATAR_KEY,
+      value,
+      updatedAt: this.now(),
+      updatedBy: 'human',
+    })
+  }
+
+  async clearAvatar(): Promise<void> {
+    await this.store.deleteSetting(SETTINGS_NAMESPACE, AVATAR_KEY)
   }
 
   persona(): string | undefined {

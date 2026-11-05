@@ -23,6 +23,8 @@ export function registerPanelApi(ctx: DshContextLike, runtime: OneRuntime): () =
   const disposers = [
     server.register({ kind: 'exact', path: '/one/api/overview', handler: (req, res) => guard(ctx, req, res, () => overview(runtime, res)) }),
     server.register({ kind: 'exact', path: '/one/api/chat', handler: (req, res) => guard(ctx, req, res, () => chat(runtime, req, res)) }),
+    server.register({ kind: 'exact', path: '/one/api/chat/clear', handler: (req, res) => guard(ctx, req, res, () => clearChat(runtime, req, res)) }),
+    server.register({ kind: 'exact', path: '/one/api/settings/avatar', handler: (req, res) => guard(ctx, req, res, () => avatar(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/tickets', handler: (req, res) => guard(ctx, req, res, () => tickets(runtime, res)) }),
     server.register({ kind: 'exact', path: '/one/api/tickets/stop', handler: (req, res) => guard(ctx, req, res, () => stopTicket(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/workspaces', handler: (req, res) => guard(ctx, req, res, () => workspaces(runtime, res)) }),
@@ -68,6 +70,8 @@ async function overview(runtime: OneRuntime, res: HttpResponseLike): Promise<voi
   json(res, 200, {
     displayName: runtime.assistantName(),
     defaultDisplayName: runtime.config.displayName,
+    avatar: runtime.settings.avatar() ?? null,
+    model: runtime.chat.status().model,
     assistantSessionId: runtime.assistantSessionId() ?? null,
     backend: runtime.store.backend,
     tickets: {
@@ -160,6 +164,30 @@ async function chat(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponse
   }
 }
 
+/** Drop the transcript and start a fresh conversation. */
+async function clearChat(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
+  if ((req.method ?? 'GET').toUpperCase() !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  try {
+    await runtime.chat.clear()
+    json(res, 200, { ok: true })
+  } catch (error: unknown) {
+    json(res, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+/** Upload or clear the assistant avatar. Kept as POST so a data URL never rides a query string. */
+async function avatar(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
+  if ((req.method ?? 'GET').toUpperCase() !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  try {
+    const body = parseBody(await readBody(req))
+    if (body['avatar'] === null || body['avatar'] === '') await runtime.settings.clearAvatar()
+    else if (typeof body['avatar'] === 'string') await runtime.settings.setAvatar(body['avatar'])
+    json(res, 200, settingsPayload(runtime))
+  } catch (error: unknown) {
+    json(res, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
 async function settings(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
   const query = urlOf(req).searchParams
   try {
@@ -189,6 +217,7 @@ function settingsPayload(runtime: OneRuntime): Record<string, unknown> {
   return {
     displayName: runtime.assistantName(),
     defaultDisplayName: runtime.config.displayName,
+    avatar: runtime.settings.avatar() ?? null,
     overridden: runtime.store.getSetting('one', 'displayName') !== undefined,
     persona: runtime.settings.persona() ?? null,
     notifyMuted: runtime.settings.notifyMuted(),
@@ -204,6 +233,39 @@ function json(res: HttpResponseLike, status: number, body: unknown): void {
     'content-length': String(Buffer.byteLength(text)),
   })
   res.end(text)
+}
+
+const MAX_BODY_BYTES = 600_000
+
+async function readBody(req: HttpRequestLike): Promise<string> {
+  return await new Promise<string>((resolvePromise, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: unknown) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+      size += buffer.length
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error('request body is too large'))
+        return
+      }
+      chunks.push(buffer)
+    })
+    req.on('end', () => resolvePromise(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', (error: unknown) => reject(error instanceof Error ? error : new Error(String(error))))
+    req.resume?.()
+  })
+}
+
+function parseBody(text: string): Record<string, unknown> {
+  if (text.trim() === '') return {}
+  try {
+    const value: unknown = JSON.parse(text)
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {}
+  } catch {
+    return {}
+  }
 }
 
 export function urlOf(req: HttpRequestLike): URL {

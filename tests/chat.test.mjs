@@ -2,12 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createEnv, makeLlm, makeReq, makeResponse } from './harness.mjs'
 
-function request(env, path) {
+function request(env, path, options = {}) {
   const routePath = path.split('?')[0]
   const handler = env.webServer.routes.get(routePath)
   assert.ok(handler, `route ${routePath} is registered`)
   const res = makeResponse()
-  return Promise.resolve(handler(makeReq({ url: path }), res)).then(() => res)
+  return Promise.resolve(handler(makeReq({ url: path, ...options }), res)).then(() => res)
 }
 
 test('the assistant page never creates or opens a DSH Session', async () => {
@@ -79,6 +79,54 @@ test('a host without llm degrades to a clear message instead of throwing', async
   try {
     const list = (await request(env, '/one/api/chat')).json()
     assert.ok(Array.isArray(list.items))
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('the avatar setting accepts a raster data URL and rejects SVG', async () => {
+  const env = await createEnv()
+  try {
+    await env.runtime.settings.setAvatar('data:image/png;base64,AAAA')
+    assert.equal(env.runtime.settings.avatar(), 'data:image/png;base64,AAAA')
+    await assert.rejects(
+      env.runtime.settings.setAvatar('data:image/svg+xml;base64,AAAA'),
+      error => error.code === 'one/avatar-invalid',
+    )
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('the avatar route uploads and clears the avatar', async () => {
+  const env = await createEnv()
+  try {
+    const uploaded = await request(env, '/one/api/settings/avatar', {
+      method: 'POST',
+      body: JSON.stringify({ avatar: 'data:image/png;base64,AAAA' }),
+    })
+    assert.equal(uploaded.status, 200)
+    assert.equal(uploaded.json().avatar, 'data:image/png;base64,AAAA')
+    const cleared = await request(env, '/one/api/settings/avatar', {
+      method: 'POST',
+      body: JSON.stringify({ avatar: null }),
+    })
+    assert.equal(cleared.json().avatar, null)
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('a new conversation clears the transcript and reseeds the welcome line', async () => {
+  const env = await createEnv()
+  try {
+    await request(env, '/one/api/chat?send=hello')
+    assert.ok((await request(env, '/one/api/chat')).json().items.length > 1)
+    const cleared = await request(env, '/one/api/chat/clear', { method: 'POST', body: '{}' })
+    assert.equal(cleared.status, 200)
+    const list = (await request(env, '/one/api/chat')).json()
+    assert.equal(list.items.length, 1)
+    assert.equal(list.items[0].role, 'assistant')
   } finally {
     await env.dispose()
   }

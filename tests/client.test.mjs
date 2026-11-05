@@ -77,6 +77,9 @@ test('there is exactly one sidebar entry and one self-contained main page', () =
   assert.equal(sidebar.length, 1)
   assert.equal(sidebar[0].declaration.id, 'dsh-one-assistant')
   assert.ok(sidebar[0].declaration.order < 0)
+  // The label is a thunk, so a rename reaches the sidebar without re-registering.
+  assert.equal(typeof sidebar[0].declaration.label, 'function')
+  assert.equal(typeof sidebar[0].declaration.label(), 'string')
   const main = registrations.filter(item => item.declaration.name === 'main')
   assert.equal(main.length, 1)
   assert.equal(main[0].declaration.key, 'dsh-one-assistant')

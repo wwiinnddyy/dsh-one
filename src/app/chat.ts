@@ -34,13 +34,11 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
-/** Extract text from one llm.stream chunk. */
+/** Extract text from one llm.stream chunk. Reasoning deltas are not answer text. */
 export function chunkText(chunk: unknown): string {
   const item = record(chunk)
   if (item === undefined) return ''
-  if ((item['type'] === 'text-delta' || item['type'] === 'text') && typeof item['text'] === 'string') return item['text']
-  if (typeof item['text'] === 'string') return item['text']
-  if (typeof item['delta'] === 'string') return item['delta']
+  if (item['type'] === 'text-delta' && typeof item['text'] === 'string') return item['text']
   return ''
 }
 
@@ -70,7 +68,7 @@ export class AssistantChat {
   }
 
   /** The host's default model route, or the configured override. */
-  private modelRoute(): { provider: string; model: string } {
+  modelRoute(): { provider: string; model: string } {
     const configured = this.store.getSetting('one', 'chatModel')?.value
     if (configured !== undefined) {
       const slash = configured.indexOf('/')
@@ -153,14 +151,22 @@ export class AssistantChat {
     }
   }
 
+  /** Start a fresh conversation: drop every row, then seed the welcome line. */
+  async clear(): Promise<void> {
+    for (const row of this.store.listChat(10_000)) await this.store.deleteChat(row.id)
+    await this.ensureWelcome()
+  }
+
   /** A short status line for the page header. */
-  status(): { readonly openTickets: number; readonly waiting: number; readonly backend: string } {
+  status(): { readonly openTickets: number; readonly waiting: number; readonly backend: string; readonly model: string } {
     const tickets = this.runtime.engine.list()
+    const route = this.modelRoute()
     return {
       openTickets: tickets.filter(item => item.status === 'open').length,
       waiting: tickets.filter(item => item.latestReport?.kind === 'ready'
         || item.latestReport?.kind === 'blocked' || item.latestReport?.kind === 'failed').length,
       backend: this.store.backend,
+      model: route.provider === '' ? '未配置' : `${route.provider}/${route.model}`,
     }
   }
 }
