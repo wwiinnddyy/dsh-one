@@ -22,6 +22,7 @@ interface LaunchPayload {
 interface RelayPayload {
   readonly text: string
   readonly sessionId?: string
+  readonly requestId?: string
 }
 
 interface ReplyPayload {
@@ -97,16 +98,14 @@ export class Executor {
 
   /** Enqueue one relay of a text into the Router session. */
   async enqueueRelay(text: string, sessionId?: string): Promise<void> {
-    await this.effects.enqueue('relay', newId('relay'), { text, ...(sessionId === undefined ? {} : { sessionId }) })
+    const requestId = newId('relay')
+    await this.effects.enqueue('relay', requestId, { text, requestId, ...(sessionId === undefined ? {} : { sessionId }) })
   }
 
   /** Enqueue one reply into an arbitrary session. */
   async enqueueReply(sessionId: string, text: string, requestId?: string): Promise<void> {
-    await this.effects.enqueue('reply', requestId ?? newId('reply'), {
-      sessionId,
-      text,
-      ...(requestId === undefined ? {} : { requestId }),
-    })
+    const key = requestId ?? newId('reply')
+    await this.effects.enqueue('reply', key, { sessionId, text, requestId: key })
   }
 
   /** Handle one DSH session event. A turn that ends without a Report blocks the ticket. */
@@ -122,7 +121,9 @@ export class Executor {
     const assignment = ticket.assignments.find(item => item.status === 'running' && item.sessionId === sessionId)
     if (assignment === undefined) return
     const lastReport = ticket.latestReport
-    if (lastReport !== undefined && lastReport.at >= assignment.startedAt) return
+    // A progress report does not settle a turn: if the turn ends right after
+    // one, the worker still owes a terminal report.
+    if (lastReport !== undefined && lastReport.at >= assignment.startedAt && lastReport.kind !== 'progress') return
     void this.engine.interrupt({
       ticketId: ticket.ticketId,
       assignmentId: assignment.assignmentId,
@@ -203,7 +204,11 @@ export class Executor {
   private async relay(payload: RelayPayload): Promise<void> {
     const router = payload.sessionId ?? this.sessions.assistantSessionId()
     if (router === undefined) throw new Later('the router session is not ready', 5_000)
-    await this.sessions.prompt({ sessionId: router, text: payload.text, requestId: newId('relay') })
+    await this.sessions.prompt({
+      sessionId: router,
+      text: payload.text,
+      requestId: payload.requestId ?? newId('relay'),
+    })
   }
 
   private async reply(payload: ReplyPayload): Promise<void> {

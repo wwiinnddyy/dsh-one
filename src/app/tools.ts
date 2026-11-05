@@ -208,6 +208,13 @@ function workTool(runtime: OneRuntime): ToolDefinitionLike {
         throw new Error('one/observe-mode: the deployment is in observe mode; no work is changed or delivered')
       }
       const agent = requireAgent(exec)
+      // Only the assistant may start or steer work; a worker may only report
+      // its own assignment and answer a question about it.
+      const assistantId = runtime.assistantSessionId()
+      const assistantOnly = ['create', 'create_goal', 'assign', 'create_workspace', 'message', 'complete', 'stop']
+      if (assistantId !== undefined && agent.id !== assistantId && assistantOnly.includes(action)) {
+        throw new Error(`one/assistant-only: only the assistant session may perform "${action}"`)
+      }
       const ticketId = asString(record['ticketId'])
       switch (action) {
         case 'create_goal': {
@@ -278,6 +285,11 @@ function workTool(runtime: OneRuntime): ToolDefinitionLike {
           const summary = asString(record['summary'])
           if (assignmentId === undefined || sessionId === undefined || kind === undefined || summary === undefined) {
             throw new Error('one/invalid-argument: assignmentId, sessionId, reportKind and summary are required')
+          }
+          const current = runtime.engine.get(ticketId)
+          const assignment = current?.assignments.find(item => item.assignmentId === assignmentId)
+          if (assignment === undefined || assignment.sessionId !== agent.id) {
+            throw new Error('one/not-assignee: only the session this assignment was dispatched to may report it')
           }
           const reported = await runtime.engine.report({
             ticketId,

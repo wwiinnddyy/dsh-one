@@ -47,7 +47,7 @@ test('one_work drives a ticket from creation to completion', async () => {
       sessionId: 'session-1',
       reportKind: 'ready',
       summary: 'Tests pass',
-    })
+    }, makeAgent('session-1', 'C:\\\\work'))
     assert.equal(reported.stage, 'person/review')
 
     const completed = await call(work, { action: 'complete', ticketId: created.ticketId })
@@ -165,6 +165,40 @@ test('a goal groups the tickets created with its id', async () => {
     const view = env.runtime.engine.goalView(goal.goalId)
     assert.equal(view.total, 1)
     assert.equal(view.open, 1)
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('only the assistant may start work once an assistant session exists', async () => {
+  const env = await createEnv()
+  try {
+    await env.runtime.sessions.setAssistantSessionId('router')
+    await assert.rejects(
+      call(env.tools.get('one_work'), { action: 'create', title: 'A', goal: 'B' }, makeAgent('worker', 'C:\\work')),
+      /assistant-only/u,
+    )
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('a worker cannot report an assignment that was dispatched to another session', async () => {
+  const env = await createEnv({ sessions: [session] })
+  try {
+    await env.runtime.sessions.setAssistantSessionId('router')
+    const assistant = makeAgent('router', 'C:\\work')
+    const work = env.tools.get('one_work')
+    const created = await call(work, { action: 'create', title: 'A', goal: 'B' }, assistant)
+    const assigned = await call(work, { action: 'assign', ticketId: created.ticketId, sessionId: 'session-1' }, assistant)
+    const assignmentId = env.runtime.engine.get(created.ticketId).assignments[0].assignmentId
+    await assert.rejects(
+      call(work, {
+        action: 'report', ticketId: created.ticketId, assignmentId, sessionId: 'session-1',
+        reportKind: 'ready', summary: 'not mine',
+      }, makeAgent('intruder', 'C:\\work')),
+      /not-assignee/u,
+    )
   } finally {
     await env.dispose()
   }

@@ -71,7 +71,7 @@ test('a report before the turn end keeps the ticket out of the block path', asyn
     await call(work, {
       action: 'report', ticketId: created.ticketId, assignmentId, sessionId: 'worker-1',
       reportKind: 'waiting', summary: 'waiting for input',
-    })
+    }, makeAgent('worker-1', 'C:\\\\work'))
     env.emitSession('worker-1', { type: 'turn/end' })
     await wait()
     assert.equal(env.runtime.engine.view(created.ticketId).stage, 'idle')
@@ -126,7 +126,7 @@ test('a message from the assistant is tagged, an ordinary one is not', async () 
     await env.runtime.sessions.setAssistantSessionId('router')
     const work = env.tools.get('one_work')
     await call(work, { action: 'message', sessionId: 's1', text: 'hello' }, makeAgent('router', 'C:\\work'))
-    await call(work, { action: 'message', sessionId: 's1', text: 'plain' }, makeAgent('caller', 'C:\\work'))
+    await env.commands.get('one').handler({ agent: makeAgent('human', 'C:\\\\work'), rawInput: 'send s1 plain' })
     await wait(60)
     const texts = env.controller.calls.prompt.map(item => item.content[0].text)
     assert.ok(texts.includes('[来自助手「鲸宝」]\n\nhello'))
