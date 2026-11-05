@@ -1,10 +1,9 @@
 /**
- * The workbench HTTP surface.
+ * The assistant page's HTTP surface.
  *
- * The host's plugin web server only serves GET/HEAD (any other method is
- * rejected with 405 before a plugin handler runs), so writes travel as GET
- * query parameters. They still go through the same Engine and Settings
- * services as the tools, so a click and a model call cannot diverge.
+ * Writes travel as GET query parameters so the same routes work on every host
+ * build. The assistant page is self-contained: it never opens a DSH Session in
+ * the UI, so the user is never asked to pick a Workspace.
  */
 
 import type {
@@ -23,10 +22,11 @@ export function registerPanelApi(ctx: DshContextLike, runtime: OneRuntime): () =
   if (server === undefined) return () => {}
   const disposers = [
     server.register({ kind: 'exact', path: '/one/api/overview', handler: (req, res) => guard(ctx, req, res, () => overview(runtime, res)) }),
+    server.register({ kind: 'exact', path: '/one/api/chat', handler: (req, res) => guard(ctx, req, res, () => chat(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/tickets', handler: (req, res) => guard(ctx, req, res, () => tickets(runtime, res)) }),
     server.register({ kind: 'exact', path: '/one/api/tickets/stop', handler: (req, res) => guard(ctx, req, res, () => stopTicket(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/workspaces', handler: (req, res) => guard(ctx, req, res, () => workspaces(runtime, res)) }),
-    server.register({ kind: 'exact', path: '/one/api/assistant', handler: (req, res) => guard(ctx, req, res, () => assistant(runtime, req, res)) }),
+    server.register({ kind: 'exact', path: '/one/api/assistant', handler: (req, res) => guard(ctx, req, res, () => assistant(runtime, res)) }),
     server.register({ kind: 'exact', path: '/one/api/settings', handler: (req, res) => guard(ctx, req, res, () => settings(runtime, req, res)) }),
   ]
   return () => {
@@ -134,17 +134,29 @@ function workspaces(runtime: OneRuntime, res: HttpResponseLike): void {
   json(res, 200, { items: rows })
 }
 
-async function assistant(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
-  const create = urlOf(req).searchParams.get('create') === '1'
-  if (!create) {
-    const sessionId = runtime.assistantSessionId()
-    return json(res, 200, { sessionId: sessionId ?? null })
-  }
+async function assistant(runtime: OneRuntime, res: HttpResponseLike): Promise<void> {
+  // The assistant page owns its transcript; the model lives in ctx.llm. No
+  // Session is ever created or opened, so there is nothing to "boot".
+  json(res, 200, {
+    sessionId: null,
+    model: runtime.chat.status().backend,
+    displayName: runtime.assistantName(),
+  })
+}
+
+/** Read the transcript, or append one human message when `send` is present. */
+async function chat(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
+  const query = urlOf(req).searchParams
+  const send = query.get('send')
   try {
-    const created = await runtime.ensureAssistant()
-    json(res, 200, created)
+    if (send !== null) {
+      const result = await runtime.chat.send(send)
+      return json(res, 200, { ok: true, ...result })
+    }
+    const limit = Math.max(1, Math.min(500, Number(query.get('limit') ?? 200) || 200))
+    json(res, 200, { items: runtime.chat.list(limit), status: runtime.chat.status() })
   } catch (error: unknown) {
-    json(res, 500, { error: error instanceof Error ? error.message : String(error) })
+    json(res, 400, { error: error instanceof Error ? error.message : String(error) })
   }
 }
 

@@ -18,8 +18,9 @@ test('assign with a cwd creates a worker session and dispatches the ticket text'
     await call(work, { action: 'assign', ticketId: created.ticketId, cwd: 'C:\\work' })
     await wait()
     assert.equal(env.controller.calls.create.length, 1)
-    assert.equal(env.controller.calls.prompt.length, 1)
-    const text = env.controller.calls.prompt[0].content[0].text
+    const delivered = [...env.controller.agents.values()].flatMap(agent => agent.delivered)
+    assert.equal(delivered.length, 1)
+    const text = delivered[0].message.content[0].text
     assert.match(text, /\[DSH One ticket /u)
     assert.match(text, /Do the thing/u)
     assert.match(text, /one_work/u)
@@ -37,7 +38,8 @@ test('an assistant-created ticket carries the origin header in the worker prompt
     const created = await call(work, { action: 'create', title: 'A', goal: 'B' }, assistant)
     await call(work, { action: 'assign', ticketId: created.ticketId, sessionId: 'worker-1' }, assistant)
     await wait()
-    assert.match(env.controller.calls.prompt[0].content[0].text, /^\[来自助手「鲸宝」\]\n\n/u)
+    const delivered = [...env.controller.agents.values()].flatMap(agent => agent.delivered)
+    assert.match(delivered[0].message.content[0].text, /^\[来自助手「鲸宝」\]\n\n/u)
   } finally {
     await env.dispose()
   }
@@ -92,7 +94,8 @@ test('worker slots cap concurrent launches and defer the rest', async () => {
     await call(work, { action: 'assign', ticketId: first.ticketId, sessionId: 's1' })
     await call(work, { action: 'assign', ticketId: second.ticketId, sessionId: 's2' })
     await wait(60)
-    assert.equal(env.controller.calls.prompt.length, 1)
+    const delivered = [...env.controller.agents.values()].flatMap(agent => agent.delivered)
+    assert.equal(delivered.length, 1)
     assert.ok(env.runtime.effects.pending().length >= 1)
   } finally {
     await env.dispose()
@@ -128,7 +131,7 @@ test('a message from the assistant is tagged, an ordinary one is not', async () 
     await call(work, { action: 'message', sessionId: 's1', text: 'hello' }, makeAgent('router', 'C:\\work'))
     await env.commands.get('one').handler({ agent: makeAgent('human', 'C:\\\\work'), rawInput: 'send s1 plain' })
     await wait(60)
-    const texts = env.controller.calls.prompt.map(item => item.content[0].text)
+    const texts = [...env.controller.agents.values()].flatMap(agent => agent.delivered).map(item => item.message.content[0].text)
     assert.ok(texts.includes('[来自助手「鲸宝」]\n\nhello'))
     assert.ok(texts.includes('plain'))
   } finally {

@@ -148,6 +148,15 @@ export const auditSchema = z.object({
   detail: z.string().optional(),
 })
 
+/** One row of the assistant's own conversation, shown only in the assistant page. */
+export const chatSchema = z.object({
+  id: z.string(),
+  role: z.enum(['user', 'assistant', 'system']),
+  text: z.string(),
+  at: nonNegative,
+  sessionSeq: nonNegative.optional(),
+})
+
 export const oneDomainSpec = defineDomain({
   name: 'dsh_one_v3',
   version: 1,
@@ -158,5 +167,6 @@ export const oneDomainSpec = defineDomain({
     sessions: domainTable(managedSessionSchema),
     settings: domainTable(settingSchema),
     audit: domainTable(auditSchema),
+    chat: domainTable(chatSchema),
   },
 })

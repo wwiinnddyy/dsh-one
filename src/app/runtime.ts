@@ -14,6 +14,7 @@ import { Executor } from './executor.js'
 import { SessionService } from './sessions.js'
 import { SettingsService } from './settings.js'
 import { WorkspaceService } from './workspace.js'
+import { AssistantChat } from './chat.js'
 
 export class OneRuntime {
   readonly ctx: DshContextLike
@@ -25,6 +26,7 @@ export class OneRuntime {
   readonly workspace: WorkspaceService
   readonly settings: SettingsService
   readonly executor: Executor
+  readonly chat: AssistantChat
 
   constructor(ctx: DshContextLike, config: OneConfig, store: Store) {
     this.ctx = ctx
@@ -36,9 +38,11 @@ export class OneRuntime {
     this.workspace = new WorkspaceService(ctx, config)
     this.settings = new SettingsService(store, config)
     this.executor = new Executor(ctx, config, store, this.engine, this.effects, this.sessions)
+    this.chat = new AssistantChat(this)
   }
 
   async start(): Promise<void> {
+    await this.chat.ensureWelcome()
     await this.executor.start()
   }
 

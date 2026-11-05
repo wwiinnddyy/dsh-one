@@ -1,6 +1,6 @@
 # DSH One
 
-DSH One 是一个面向 DeepSeek Harness 的**通用工作区助手**：聊天是主入口，助手可以跨工作区观察、派活、推进目标，并在需要人决定时回来找你。
+DSH One 是一个面向 DeepSeek Harness 的**通用工作区助手**：一个属于自己的页面，进来就能直接和助手对话，同时它能跨工作区拆工单、复用或新建执行会话、推进目标，需要人决定时再回来找你。
 
 > 版本：`0.3.0`（完整重写版，旧实现保留在 git tag `legacy-0.2.0`）。
 > 架构依据：DeepSeek Harness 的 Super-agent 设计（Router/Worker 双层、事件驱动、Effect 持久队列、单一写者）。
@@ -8,24 +8,21 @@ DSH One 是一个面向 DeepSeek Harness 的**通用工作区助手**：聊天�
 
 ## 它是什么
 
-- **Router（助手会话）**：一个普通的 DSH 会话，但只有它拥有助手身份提示词。它负责理解目标、拆工单、挑执行会话、汇总结果。
-- **Worker（执行会话）**：可以是某个工作区里**已有的会话**，也可以由助手选一个文件夹新建工作区后开会话。会话自己的 cwd 就是隔离单位。
-- **Ticket（工单）**：唯一的工作单元。`Goal` 只是工单的分组，不拥有调度器。
-- **Effects**：所有"提交后要做的事"（派发、投递、回传、回复）都走持久队列，统一重试与顺序。
+- **助手页面**：左侧「助手」打开的是一个**插件自绘的整页**——自己的标题栏、自己的对话气泡、自己的输入框、对话/工单/设置三个标签。它**不是** the agent harness 的会话，也不会弹「选择工作区」。
+- **对话引擎**：页面直接调用宿主的 `ctx.llm`（用 profile 的默认模型），聊天记录持久化在 `dsh_one_v3` 域的 `chat` 表。系统提示词用同一套 persona，只对助手生效。
+- **Ticket（工单）**：唯一工作单元。`Goal` 只是工单的分组，不拥有调度器。
+- **Effects**：所有「提交后要做的事」（派发、投递、回传、回复）都走持久队列，统一重试与顺序。
+- **Worker**：助手自己决定复用其他工作区里已有的会话，或选一个文件夹新建工作区/会话。
 
 ## 使用
 
 安装到 DSH profile 后重启：
 
-1. 左侧「助手」打开助手会话；「工作台」打开工单/设置面板。
-2. 直接对助手说目标，例如：
+1. 左侧「助手」打开助手页面，直接输入目标，例如：
    > 在 `C:\work\demo` 里看看测试为什么挂了，修好并告诉我结果。
-3. 助手会：
-   - `one_work create` 建工单；
-   - 复用或新建一个该工作区的执行会话（`assign` 带 `sessionId` 或 `cwd`）；
-   - 执行会话收到带 `[来自助手「鲸宝」]` 的派工消息，完成后用 `one_work report` 汇报；
-   - 需要人决定时，助手被唤醒并在对话里问你。
-4. `/one status` 随时看工单；工作台面板可以停止工单、改助手名字与行为文本。
+2. 页面立即显示你的话和助手的回复；助手会通过 `one_work` 建工单、挑/建执行会话、派活。
+3. 「工单」标签看各工单阶段、可停止；「设置」改助手名字与行为文本。
+4. `/one status`、`/one name`、`/one persona`、`/one send`、`/one workspace` 是人类命令入口。
 
 ## 工具面
 
@@ -34,21 +31,19 @@ DSH One 是一个面向 DeepSeek Harness 的**通用工作区助手**：聊天�
 | `one_work` | 统一入口：`create` / `create_goal` / `assign` / `report` / `answer` / `complete` / `stop` / `create_workspace` / `message` |
 | `one_status` | 只读：工单按阶段统计、会话、工作区 |
 
-人类命令：`/one status`、`/one name [新名字|reset]`、`/one persona [文本|reset]`、`/one send <sessionId> <text>`、`/one workspace <path> [name]`、`/one assistant`。
-
 ## 架构
 
 ```
-Router(助手会话) ── one_work ──▶ Engine(唯一写者) ──▶ Ticket
+助手页面(自绘) ── /one/api/chat ──▶ ctx.llm ──▶ 回复写回 chat 表
+      │
+      └── /one/api/tickets ──▶ Engine(唯一写者) ──▶ Ticket
                                       │
-                                      ├── Effects ──▶ Executor ──▶ Worker 会话
-                                      │                              │
-                                      └──────────── Report ◀─────────┘
+                                      └── Effects ──▶ Executor ──▶ Worker 会话
 ```
 
 - `src/core/`：领域模型、阶段表、Engine。零 I/O，可单测。
-- `src/app/`：Store（`dsh_one_v3` 存储域）、Effects、Sessions、Executor、Settings、HTTP、工具与命令。
-- `src/client.ts`：助手/工作台两个侧栏入口、助手身份条、工作台面板、设置页。
+- `src/app/`：`dsh_one_v3` 存储域、Effects、Sessions、Executor、AssistantChat、Settings、HTTP、工具与命令。
+- `src/client.ts`：整页助手 UI（一个侧栏入口 + 一个 `main` 面板 + 一个设置页）。
 
 ## 开发
 
@@ -63,8 +58,10 @@ npm run typecheck
 | Key | 默认 | 含义 |
 |---|---|---|
 | `displayName` | `鲸宝` | 助手名字；用户可在设置里覆盖 |
-| `assistantHomeRoot` | `""` | 助手自己的目录根；空则 `<DSH home>/super-mind` |
-| `mode` | `active` | `active` 才真正执行工具动作；设为 `observe` 则只拒绝并记录 |
+| `assistantHomeRoot` | `""` | 助手自己的目录根 |
+| `mode` | `active` | `observe` 则拒绝工具动作 |
 | `allowedWorkspaceRoots` | `[]` | 允许的工作区根；空表示全部 |
 | `maxWorkers` | `4` | 并发执行会话数 |
 | `commandTimeoutMs` | `30000` | 单次会话操作超时 |
+
+助手对话默认使用 profile 的默认模型；可用 `/one` 设置或 `one.chatModel`（`provider/model`）覆盖。

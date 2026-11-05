@@ -45,6 +45,16 @@ export interface AuditRecord {
   readonly detail?: string
 }
 
+/** One row of the assistant's own conversation. */
+export interface ChatRecord {
+  readonly id: string
+  readonly role: 'user' | 'assistant' | 'system'
+  readonly text: string
+  readonly at: number
+  /** The host Session event seq that produced an assistant message, for dedupe. */
+  readonly sessionSeq?: number
+}
+
 interface TableLike<T> {
   get(key: string): T | undefined
   entries(): IterableIterator<[string, T]>
@@ -83,6 +93,10 @@ export interface Store extends TicketRepository, GoalRepository, EffectStore {
   listSettings(namespace?: string): readonly SettingRecord[]
   appendAudit(record: AuditRecord, limit: number): Promise<void>
   listAudit(limit?: number): readonly AuditRecord[]
+  getChat(id: string): ChatRecord | undefined
+  putChat(record: ChatRecord): Promise<void>
+  listChat(limit?: number): readonly ChatRecord[]
+  chatBySessionSeq(seq: number): ChatRecord | undefined
 }
 
 function settingId(namespace: string, key: string): string {
@@ -95,6 +109,10 @@ function byUpdated<T extends { readonly updatedAt: number }>(rows: readonly T[])
 
 function byAt<T extends { readonly at: number }>(rows: readonly T[]): T[] {
   return [...rows].sort((a, b) => b.at - a.at)
+}
+
+function chatRows<T extends ChatRecord>(rows: readonly T[]): T[] {
+  return [...rows].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))
 }
 
 class MemoryTable<T> {
@@ -126,6 +144,7 @@ export class MemoryStore implements Store {
   private readonly sessions = new MemoryTable<ManagedSessionRecord>()
   private readonly settings = new MemoryTable<SettingRecord>()
   private readonly audit = new MemoryTable<AuditRecord>()
+  private readonly chat = new MemoryTable<ChatRecord>()
 
   getTicket(ticketId: string): Ticket | undefined { return this.tickets.get(ticketId) }
   async putTicket(ticket: Ticket): Promise<void> { await this.tickets.put(ticket.ticketId, ticket) }
@@ -165,6 +184,15 @@ export class MemoryStore implements Store {
   }
   listAudit(limit = 50): readonly AuditRecord[] {
     return byAt([...this.audit.entries()].map(([, value]) => value)).slice(0, limit)
+  }
+
+  getChat(id: string): ChatRecord | undefined { return this.chat.get(id) }
+  async putChat(record: ChatRecord): Promise<void> { await this.chat.put(record.id, record) }
+  listChat(limit = 200): readonly ChatRecord[] {
+    return chatRows([...this.chat.entries()].map(([, value]) => value)).slice(-limit)
+  }
+  chatBySessionSeq(seq: number): ChatRecord | undefined {
+    return [...this.chat.entries()].map(([, value]) => value).find(item => item.sessionSeq === seq)
   }
 }
 
@@ -219,6 +247,15 @@ export class DomainStore implements Store {
   }
   listAudit(limit = 50): readonly AuditRecord[] {
     return byAt([...this.table<AuditRecord>('audit').entries()].map(([, value]) => value)).slice(0, limit)
+  }
+
+  getChat(id: string): ChatRecord | undefined { return this.table<ChatRecord>('chat').get(id) }
+  async putChat(record: ChatRecord): Promise<void> { await this.table<ChatRecord>('chat').put(record.id, record) }
+  listChat(limit = 200): readonly ChatRecord[] {
+    return chatRows([...this.table<ChatRecord>('chat').entries()].map(([, value]) => value)).slice(-limit)
+  }
+  chatBySessionSeq(seq: number): ChatRecord | undefined {
+    return [...this.table<ChatRecord>('chat').entries()].map(([, value]) => value).find(item => item.sessionSeq === seq)
   }
 }
 

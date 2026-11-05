@@ -113,7 +113,8 @@ test('/one send stays untagged because a human typed it', async () => {
     })
     assert.equal(result.kind, 'success')
     await wait()
-    assert.equal(ctx.env.controller.calls.prompt.at(-1).content[0].text, 'hello-from-human')
+    const agent = ctx.env.controller.agents.get('s1')
+    assert.equal(agent.delivered.at(-1).message.content[0].text, 'hello-from-human')
   } finally {
     await ctx.cleanup()
   }

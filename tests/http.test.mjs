@@ -44,22 +44,15 @@ test('settings can be read and updated through the panel route', async () => {
   }
 })
 
-test('the assistant route creates a real session and reuses it', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-one-http-'))
-  const env = await createEnv({ config: { assistantHomeRoot: root } })
+test('the assistant route reports the assistant without creating a Session', async () => {
+  const env = await createEnv()
   try {
-    // DSH may hand the handler a lowercase method; it must still route.
-    const created = (await request(env, '/one/api/assistant?create=1')).json()
-    assert.equal(typeof created.sessionId, 'string')
-    assert.equal(created.created, true)
-    const again = (await request(env, '/one/api/assistant?create=1')).json()
-    assert.equal(again.created, false)
-    assert.equal(again.sessionId, created.sessionId)
     const read = (await request(env, '/one/api/assistant')).json()
-    assert.equal(read.sessionId, created.sessionId)
+    assert.equal(read.sessionId, null)
+    assert.equal(typeof read.displayName, 'string')
+    assert.equal(env.controller.calls.create.length, 0)
   } finally {
     await env.dispose()
-    rmSync(root, { recursive: true, force: true })
   }
 })
 

@@ -5,12 +5,22 @@
  * cannot resolve DSH's own type packages at build time.
  */
 
-/** Minimal Agent surface used by tools. */
+/** Minimal Agent surface used by tools and by in-process message delivery. */
 export interface AgentLike {
   readonly id: string
   readonly session: {
     readonly id?: string
     readonly header: { readonly cwd?: string }
+  }
+  /** Queue a user message for the next turn. */
+  followup?(message: unknown): void
+  /** Deliver a user message to the nearest step of the current turn. */
+  steer?(message: unknown): void
+  /** Insert a message into history without waking the turn. */
+  inject?(message: unknown): void
+  readonly inbox?: {
+    readonly nextTurn?: readonly unknown[]
+    readonly nextStep?: readonly unknown[]
   }
 }
 
@@ -55,6 +65,14 @@ export interface SessionControllerLike {
     readonly clientTimeZone?: string
   }, signal: AbortSignal): Promise<unknown>
   cancel?(request: { readonly sessionId: string }): { readonly accepted: true }
+  /** Resolve the live Agent that owns a Session, when one is mounted. */
+  resolveAgent?(sessionId: string): Promise<{ readonly agent?: AgentLike; readonly error?: { readonly code?: string; readonly message?: string } }>
+}
+
+/** Live Agent registry, for delivering messages without reopening a write handle. */
+export interface AgentsLike {
+  get(id: string): AgentLike | undefined
+  list(): AgentLike[]
 }
 
 /** Host workspace registry. */

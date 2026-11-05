@@ -15,7 +15,7 @@ export function makeTable(seed = []) {
 }
 
 export function makeStorageDomain(seed = {}) {
-  const names = ['tickets', 'goals', 'effects', 'sessions', 'settings', 'audit']
+  const names = ['tickets', 'goals', 'effects', 'sessions', 'settings', 'audit', 'chat']
   const tables = new Map(names.map(name => [name, makeTable(seed[name] ?? [])]))
   return {
     tables,
@@ -39,15 +39,36 @@ export function makeStorageDomain(seed = {}) {
 }
 
 export function makeAgent(id, cwd) {
-  return { id, session: { id, header: { cwd } } }
+  const delivered = []
+  return {
+    id,
+    session: { id, header: { cwd } },
+    delivered,
+    inbox: { nextTurn: [], nextStep: [] },
+    followup(message) { delivered.push({ mode: 'queue', message }) },
+    steer(message) { delivered.push({ mode: 'steer', message }) },
+    inject(message) { delivered.push({ mode: 'inject', message }) },
+  }
 }
 
 export function makeController({ sessions = [], promptImpl, createImpl } = {}) {
   const calls = { list: 0, create: [], prompt: [] }
   const state = { sessions: [...sessions] }
+  const agents = new Map()
+  // Pre-listed Sessions are already mounted in the host, so they own an Agent.
+  for (const item of state.sessions) {
+    agents.set(item.sessionId, makeAgent(item.sessionId, item.cwd ?? 'C:\\work'))
+  }
   return {
     calls,
     state,
+    agents,
+    async resolveAgent(sessionId) {
+      const agent = agents.get(sessionId)
+      return agent === undefined
+        ? { error: { code: 'session/not-found', message: `missing ${sessionId}` } }
+        : { agent }
+    },
     async list() {
       calls.list += 1
       return { items: [...state.sessions] }
@@ -66,6 +87,8 @@ export function makeController({ sessions = [], promptImpl, createImpl } = {}) {
           ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
         })
       }
+      const agent = makeAgent(sessionId, request.cwd ?? 'C:\\work')
+      agents.set(sessionId, agent)
       return { sessionId }
     },
     async prompt(request) {
@@ -133,7 +156,7 @@ export function makeResponse() {
   }
 }
 
-export function makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt, webServer, connection } = {}) {
+export function makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt, webServer, connection, llm, agentDefaultModel } = {}) {
   const tools = new Map()
   const commands = new Map()
   const services = new Map()
@@ -152,6 +175,8 @@ export function makeCtx({ controller, storageDomain, workspaceRegistry, systemPr
       if (name === 'systemPrompt') return systemPrompt
       if (name === 'webServer') return webServer
       if (name === 'connection') return connection
+      if (name === 'llm') return llm
+      if (name === 'agentDefaultModel') return agentDefaultModel
       return undefined
     },
     provide(name, value) {
@@ -191,6 +216,17 @@ export function makeCtx({ controller, storageDomain, workspaceRegistry, systemPr
   return { ctx, tools, commands, services, effects, emitSession, dispose }
 }
 
+export function makeLlm(reply = '好的，我来跟进。') {
+  const calls = []
+  return {
+    calls,
+    async *stream(options) {
+      calls.push(options)
+      yield { type: 'text-delta', text: reply }
+    },
+  }
+}
+
 export async function createEnv(options = {}) {
   const controller = options.controller ?? makeController({ sessions: options.sessions ?? [] })
   const storageDomain = options.storageDomain ?? makeStorageDomain(options.seed)
@@ -198,7 +234,9 @@ export async function createEnv(options = {}) {
   const systemPrompt = options.systemPrompt
   const webServer = options.webServer ?? makeWebServer()
   const connection = options.connection ?? makeConnection(undefined)
-  const host = makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt, webServer, connection })
+  const llm = options.llm ?? makeLlm()
+  const agentDefaultModel = { currentSelection: () => ({ provider: 'p', model: 'm1' }) }
+  const host = makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt, webServer, connection, llm, agentDefaultModel })
   await apply(host.ctx, options.config ?? {})
   return {
     ...host,

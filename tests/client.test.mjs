@@ -17,7 +17,7 @@ function loadClient() {
     head: { appendChild: element => styles.push(element) },
     querySelector: () => null,
     querySelectorAll: () => [],
-    createElement: tag => ({ tag, textContent: '' }),
+    createElement: tag => ({ tag, textContent: '', dataset: {} }),
     visibilityState: 'visible',
   }
   const window = { __ModuleLoader__: { load: entry => { registered = entry } } }
@@ -57,11 +57,10 @@ function makeSlots() {
 function applyModule() {
   const { module } = loadClient()
   const { slots, registrations } = makeSlots()
-  const services = {}
   const ctx = {
     slots,
     effect(fn) { return fn() },
-    get(name) { return services[name] },
+    get() { return undefined },
   }
   module.apply(ctx)
   return { registrations }
@@ -72,23 +71,30 @@ test('the client declares only the slots service', () => {
   assert.deepEqual([...module.inject], ['slots'])
 })
 
-test('the client registers two sidebar entries and two main panels', () => {
+test('there is exactly one sidebar entry and one self-contained main page', () => {
   const { registrations } = applyModule()
   const sidebar = registrations.filter(item => item.declaration.name === 'sidebar.panellist')
-  assert.deepEqual(sidebar.map(item => item.declaration.id).sort(), ['dsh-one-assistant', 'dsh-one-workbench'])
-  assert.ok(sidebar.every(item => item.declaration.order < 0))
+  assert.equal(sidebar.length, 1)
+  assert.equal(sidebar[0].declaration.id, 'dsh-one-assistant')
+  assert.ok(sidebar[0].declaration.order < 0)
   const main = registrations.filter(item => item.declaration.name === 'main')
-  assert.deepEqual(main.map(item => item.declaration.key).sort(), ['dsh-one-assistant', 'dsh-one-workbench'])
+  assert.equal(main.length, 1)
+  assert.equal(main[0].declaration.key, 'dsh-one-assistant')
 })
 
-test('the assistant conversation has a persistent identity seat', () => {
-  const { registrations } = applyModule()
-  const dock = registrations.find(item => item.declaration.name === 'conversation.input.dock')
-  assert.ok(dock)
-  assert.equal(dock.declaration.id, 'dsh-one-identity')
-  const chip = registrations.find(item => item.declaration.name === 'conversation.session.header.actions')
-  assert.ok(chip)
-  assert.equal(chip.declaration.id, 'dsh-one-assistant-chip')
+test('the assistant page never opens a DSH Session or asks for a Workspace', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.ok(!source.includes('openSession'), 'no Session navigation')
+  assert.ok(!source.includes('uiWorkspace'), 'no Workspace picker dependency')
+  assert.ok(!source.includes('AssistantLauncher'), 'no redirecting launcher')
+})
+
+test('the page draws its own transcript and composer', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes('one-chat'), 'own transcript')
+  assert.ok(source.includes('one-composer'), 'own composer')
+  assert.ok(source.includes('/one/api/chat'), 'own chat API')
+  assert.ok(!source.includes('conversation.input.dock'), 'does not borrow the chat shell')
 })
 
 test('the client keeps its own settings tab', () => {
@@ -103,8 +109,6 @@ test('the client does not register a floating overlay', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.ok(!source.includes('shell.overlay'))
   assert.ok(!source.includes('position:fixed'))
-  const { registrations } = applyModule()
-  assert.ok(!registrations.some(item => item.declaration.name === 'shell.overlay'))
 })
 
 test('every registered surface renders without throwing', () => {

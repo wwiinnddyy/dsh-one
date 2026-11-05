@@ -8,6 +8,8 @@
  */
 
 import type {
+  AgentLike,
+  AgentsLike,
   DshContextLike,
   OneConfig,
   SessionControllerLike,
@@ -29,6 +31,8 @@ export class SessionService {
   private readonly store: Store
   private readonly config: OneConfig
   private readonly now: () => number
+  /** Live Agents resolved for our own sessions, so delivery never reopens a write handle. */
+  private readonly live = new Map<string, AgentLike>()
 
   constructor(ctx: DshContextLike, store: Store, config: OneConfig, options: SessionServiceOptions = {}) {
     this.ctx = ctx
@@ -105,23 +109,61 @@ export class SessionService {
     return record
   }
 
-  /** Deliver one message to a session; the request id makes a retry idempotent. */
+  /**
+   * Deliver one user message to a Session.
+   *
+   * When the live Agent is mounted we deliver straight to its inbox (the
+   * official dsh-superagent pattern). Opening a second write handle through
+   * `sessionController.prompt` would collide with the Agent's own handle and
+   * throw `SessionAlreadyOwnedError`. The controller path stays as a fallback
+   * for Sessions that are listed but not currently mounted.
+   */
   async prompt(input: {
     readonly sessionId: string
     readonly text: string
     readonly requestId: string
     readonly mode?: 'queue' | 'steer'
   }): Promise<void> {
+    const content: readonly { readonly type: 'text'; readonly text: string }[] = [
+      { type: 'text', text: input.text },
+    ]
+    const message = {
+      id: input.requestId,
+      role: 'user',
+      content,
+      source: { kind: 'plugin', plugin: 'dsh-one', rpcId: input.requestId },
+    }
+    const agent = await this.resolveAgent(input.sessionId)
+    if (agent !== undefined) {
+      if (input.mode === 'steer') agent.steer?.(message)
+      else agent.followup?.(message)
+      return
+    }
     const controller = this.requireController()
     await controller.prompt(
       {
         requestId: input.requestId,
         sessionId: input.sessionId,
         mode: input.mode ?? 'queue',
-        content: [{ type: 'text', text: input.text }],
+        content: message.content,
       },
       AbortSignal.timeout(this.config.commandTimeoutMs),
     )
+  }
+
+  /** Resolve the mounted Agent for a Session, from the controller or the registry. */
+  private async resolveAgent(sessionId: string): Promise<AgentLike | undefined> {
+    const controller = this.controller
+    if (controller?.resolveAgent !== undefined) {
+      try {
+        const result = await controller.resolveAgent(sessionId)
+        if (result.agent !== undefined) return result.agent
+      } catch {
+        // Fall through to the live registry below.
+      }
+    }
+    const agents = this.ctx.get('agents') as AgentsLike | undefined
+    return agents?.get(sessionId)
   }
 
   assistantSessionId(): string | undefined {
