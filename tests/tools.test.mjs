@@ -126,6 +126,21 @@ function collectTypeArrays(node, path, failures) {
   }
 }
 
+/** The host's tool schema subset requires `additionalProperties` to be boolean. */
+function collectAdditionalProperties(node, path, failures) {
+  if (node === null || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    node.forEach((item, index) => collectAdditionalProperties(item, `${path}[${index}]`, failures))
+    return
+  }
+  if ('additionalProperties' in node && typeof node.additionalProperties !== 'boolean') {
+    failures.push(`${path}.additionalProperties`)
+  }
+  for (const [key, value] of Object.entries(node)) {
+    collectAdditionalProperties(value, `${path}.${key}`, failures)
+  }
+}
+
 test('tool schemas use only the schema subset the host accepts', async () => {
   const env = await createEnv()
   try {
@@ -133,6 +148,8 @@ test('tool schemas use only the schema subset the host accepts', async () => {
     for (const tool of env.tools.values()) {
       collectTypeArrays(tool.parameters, `${tool.name}.parameters`, failures)
       collectTypeArrays(tool.output.schema, `${tool.name}.output`, failures)
+      collectAdditionalProperties(tool.parameters, `${tool.name}.parameters`, failures)
+      collectAdditionalProperties(tool.output.schema, `${tool.name}.output`, failures)
     }
     assert.deepEqual(failures, [])
   } finally {

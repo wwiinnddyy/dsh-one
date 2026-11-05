@@ -96,7 +96,7 @@ const statusOutput = {
     total: { type: 'integer' },
     open: { type: 'integer' },
     ended: { type: 'integer' },
-    byStage: { type: 'object', additionalProperties: { type: 'integer' } },
+    byStage: { type: 'object', additionalProperties: true },
     tickets: {
       type: 'array',
       items: {
