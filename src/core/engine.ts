@@ -1,21 +1,28 @@
 /**
- * The single writer of Tickets.
+ * The single writer of Tickets and Goals.
  *
- * Every command is synchronous, validates the current facts, builds the next
- * immutable Ticket and writes it exactly once. Adapters (tools, HTTP, the
- * executor loop) call these commands; none of them mutate a Ticket directly.
+ * Every command validates the current facts, builds the next immutable row and
+ * writes it exactly once. Adapters (tools, the executor, the panel) call these
+ * commands; none of them mutate a Ticket directly.
  */
 
-import type { Assignment, Report, ReportKind, Ticket } from './model.js'
+import type { Assignment, Goal, Report, ReportKind, Ticket } from './model.js'
 import { UserError } from './errors.js'
 import { newId } from './ids.js'
 import { stageOf } from './stage.js'
 
 /** The only Ticket persistence port the Engine needs. */
 export interface TicketRepository {
-  get(ticketId: string): Ticket | undefined
-  put(ticket: Ticket): void
-  list(): readonly Ticket[]
+  getTicket(ticketId: string): Ticket | undefined
+  putTicket(ticket: Ticket): Promise<void>
+  listTickets(): readonly Ticket[]
+}
+
+/** The only Goal persistence port the Engine needs. */
+export interface GoalRepository {
+  getGoal(goalId: string): Goal | undefined
+  putGoal(goal: Goal): Promise<void>
+  listGoals(): readonly Goal[]
 }
 
 export interface CreateTicketInput {
@@ -65,9 +72,21 @@ export interface CompleteInput {
   readonly reason?: string
 }
 
+export interface CreateGoalInput {
+  readonly title: string
+  readonly cwd?: string
+  readonly goalId?: string
+}
+
+/** A Goal plus the progress derived from its Tickets. */
+export interface GoalView extends Goal {
+  readonly total: number
+  readonly done: number
+  readonly open: number
+}
+
 const REPORT_KINDS: readonly ReportKind[] = ['progress', 'waiting', 'ready', 'blocked', 'failed', 'dropped']
 
-/** Ends one Assignment's life without losing its history. */
 function endAssignment(assignment: Assignment, at: number, error?: string): Assignment {
   return {
     ...assignment,
@@ -78,30 +97,32 @@ function endAssignment(assignment: Assignment, at: number, error?: string): Assi
 }
 
 export class Engine {
-  private readonly repo: TicketRepository
+  private readonly tickets: TicketRepository
+  private readonly goals: GoalRepository
   private readonly now: () => number
 
-  constructor(repo: TicketRepository, now: () => number = Date.now) {
-    this.repo = repo
+  constructor(tickets: TicketRepository, goals: GoalRepository, now: () => number = Date.now) {
+    this.tickets = tickets
+    this.goals = goals
     this.now = now
   }
 
   get(ticketId: string): Ticket | undefined {
-    return this.repo.get(ticketId)
+    return this.tickets.getTicket(ticketId)
   }
 
   list(): readonly Ticket[] {
-    return this.repo.list()
+    return this.tickets.listTickets()
   }
 
   /** Create one Ticket. The same `ticketId` returns the existing row. */
-  createTicket(input: CreateTicketInput): Ticket {
+  async createTicket(input: CreateTicketInput): Promise<Ticket> {
     const title = input.title.trim()
     const goal = input.goal.trim()
     if (title === '') throw new UserError('one/invalid-argument', 'ticket title must not be blank', { field: 'title' })
     if (goal === '') throw new UserError('one/invalid-argument', 'ticket goal must not be blank', { field: 'goal' })
     const ticketId = input.ticketId ?? newId('ticket')
-    const existing = this.repo.get(ticketId)
+    const existing = this.tickets.getTicket(ticketId)
     if (existing !== undefined) return existing
     const at = this.now()
     const ticket: Ticket = {
@@ -116,12 +137,12 @@ export class Engine {
       createdAt: at,
       updatedAt: at,
     }
-    this.repo.put(ticket)
+    await this.tickets.putTicket(ticket)
     return ticket
   }
 
   /** Bind the Ticket to one Executor Session. */
-  assign(input: AssignInput): Ticket {
+  async assign(input: AssignInput): Promise<Ticket> {
     const ticket = this.requireTicket(input.ticketId)
     this.assertOpen(ticket)
     if (ticket.assignments.some(item => item.status === 'running')) {
@@ -136,16 +157,16 @@ export class Engine {
       status: 'running',
       startedAt: at,
     }
-    return this.write({ ...ticket, assignments: [...ticket.assignments, assignment], updatedAt: at })
+    return await this.write({ ...ticket, assignments: [...ticket.assignments, assignment], updatedAt: at })
   }
 
   /**
    * Record one Report.
    *
    * `progress` keeps the Assignment running; every other kind ends it. A
-   * `dropped` Report also ends the Ticket without a message.
+   * `dropped` Report also ends the Ticket without asking a person.
    */
-  report(input: ReportInput): Ticket {
+  async report(input: ReportInput): Promise<Ticket> {
     const ticket = this.requireTicket(input.ticketId)
     this.assertOpen(ticket)
     if (!REPORT_KINDS.includes(input.kind)) {
@@ -184,23 +205,23 @@ export class Engine {
         : item)
     const next: Ticket = { ...ticket, assignments, latestReport: report, updatedAt: at }
     if (input.kind === 'dropped') {
-      return this.write({ ...next, status: 'ended', outcome: 'dropped', endedAt: at, endReason: summary })
+      return await this.write({ ...next, status: 'ended', outcome: 'dropped', endedAt: at, endReason: summary })
     }
-    return this.write(next)
+    return await this.write(next)
   }
 
   /** Raise one structured question for a person. */
-  ask(input: AskInput): Ticket {
+  async ask(input: AskInput): Promise<Ticket> {
     const ticket = this.requireTicket(input.ticketId)
     this.assertOpen(ticket)
     const question = input.question.trim()
     if (question === '') throw new UserError('one/invalid-argument', 'question must not be blank', { field: 'question' })
     const at = this.now()
-    return this.write({ ...ticket, attention: { question, askedAt: at }, updatedAt: at })
+    return await this.write({ ...ticket, attention: { question, askedAt: at }, updatedAt: at })
   }
 
   /** Answer the outstanding question. */
-  answer(input: AnswerInput): Ticket {
+  async answer(input: AnswerInput): Promise<Ticket> {
     const ticket = this.requireTicket(input.ticketId)
     this.assertOpen(ticket)
     const attention = ticket.attention
@@ -210,11 +231,11 @@ export class Engine {
     const answer = input.answer.trim()
     if (answer === '') throw new UserError('one/invalid-argument', 'answer must not be blank', { field: 'answer' })
     const at = this.now()
-    return this.write({ ...ticket, attention: { ...attention, answer, answeredAt: at }, updatedAt: at })
+    return await this.write({ ...ticket, attention: { ...attention, answer, answeredAt: at }, updatedAt: at })
   }
 
   /** Complete a Ticket whose latest Report is `ready`. */
-  complete(input: CompleteInput): Ticket {
+  async complete(input: CompleteInput): Promise<Ticket> {
     const ticket = this.requireTicket(input.ticketId)
     this.assertOpen(ticket)
     if (ticket.latestReport?.kind !== 'ready') {
@@ -224,27 +245,74 @@ export class Engine {
       })
     }
     const at = this.now()
-    return this.end(ticket, 'completed', input.reason ?? 'completed', at)
+    return await this.end(ticket, 'completed', input.reason ?? 'completed', at)
   }
 
   /** Stop a Ticket. This is a person's decision and cannot be undone. */
-  stop(input: StopInput): Ticket {
+  async stop(input: StopInput): Promise<Ticket> {
     const ticket = this.requireTicket(input.ticketId)
     this.assertOpen(ticket)
     const at = this.now()
-    return this.end(ticket, 'cancelled', input.reason ?? 'stopped', at)
+    return await this.end(ticket, 'cancelled', input.reason ?? 'stopped', at)
   }
 
   /** A tool or panel view: the stored Ticket plus its derived stage. */
   view(ticketId: string): (Ticket & { readonly stage: ReturnType<typeof stageOf> }) | undefined {
-    const ticket = this.repo.get(ticketId)
+    const ticket = this.tickets.getTicket(ticketId)
     return ticket === undefined ? undefined : { ...ticket, stage: stageOf(ticket) }
   }
 
-  private end(ticket: Ticket, outcome: 'completed' | 'dropped' | 'cancelled', reason: string, at: number): Ticket {
+  async createGoal(input: CreateGoalInput): Promise<Goal> {
+    const title = input.title.trim()
+    if (title === '') throw new UserError('one/invalid-argument', 'goal title must not be blank', { field: 'title' })
+    const goalId = input.goalId ?? newId('goal')
+    const existing = this.goals.getGoal(goalId)
+    if (existing !== undefined) return existing
+    const at = this.now()
+    const goal: Goal = {
+      goalId,
+      title,
+      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+      ticketIds: [],
+      createdAt: at,
+      updatedAt: at,
+    }
+    await this.goals.putGoal(goal)
+    return goal
+  }
+
+  async attachToGoal(goalId: string, ticketId: string): Promise<Goal> {
+    const goal = this.goals.getGoal(goalId)
+    if (goal === undefined) throw new UserError('one/goal-not-found', `goal "${goalId}" was not found`, { goalId })
+    if (goal.ticketIds.includes(ticketId)) return goal
+    const updated: Goal = { ...goal, ticketIds: [...goal.ticketIds, ticketId], updatedAt: this.now() }
+    await this.goals.putGoal(updated)
+    return updated
+  }
+
+  getGoal(goalId: string): Goal | undefined {
+    return this.goals.getGoal(goalId)
+  }
+
+  listGoals(): readonly Goal[] {
+    return this.goals.listGoals()
+  }
+
+  goalView(goalId: string): GoalView | undefined {
+    const goal = this.goals.getGoal(goalId)
+    if (goal === undefined) return undefined
+    const tickets = goal.ticketIds
+      .map(ticketId => this.tickets.getTicket(ticketId))
+      .filter((ticket): ticket is Ticket => ticket !== undefined)
+    const done = tickets.filter(ticket => ticket.status === 'ended' && ticket.outcome === 'completed').length
+    const open = tickets.filter(ticket => ticket.status === 'open').length
+    return { ...goal, total: tickets.length, done, open }
+  }
+
+  private async end(ticket: Ticket, outcome: 'completed' | 'dropped' | 'cancelled', reason: string, at: number): Promise<Ticket> {
     const assignments = ticket.assignments.map(item =>
       item.status === 'running' ? endAssignment(item, at) : item)
-    return this.write({
+    return await this.write({
       ...ticket,
       status: 'ended',
       outcome,
@@ -255,13 +323,13 @@ export class Engine {
     })
   }
 
-  private write(ticket: Ticket): Ticket {
-    this.repo.put(ticket)
+  private async write(ticket: Ticket): Promise<Ticket> {
+    await this.tickets.putTicket(ticket)
     return ticket
   }
 
   private requireTicket(ticketId: string): Ticket {
-    const ticket = this.repo.get(ticketId)
+    const ticket = this.tickets.getTicket(ticketId)
     if (ticket === undefined) {
       throw new UserError('one/ticket-not-found', `ticket "${ticketId}" was not found`, { ticketId })
     }

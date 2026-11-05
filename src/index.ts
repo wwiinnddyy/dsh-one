@@ -1,17 +1,16 @@
 /**
  * The dsh-one bundle row.
  *
- * This is the new base: the domain Engine is the only writer of Tickets, the
- * Effects queue owns everything that happens after a command commits, and the
- * plugin exposes one delegation tool plus one status tool. Later phases add the
- * DSH session adapter, sources, the panel and the assistant conversation.
+ * The domain Engine is the only writer of Tickets and Goals; the Effects queue
+ * owns everything that happens after a command commits. This row wires the
+ * persistent store and exposes the model-facing tools.
  */
 
 import z from '@deepseek-ai/schemastery'
 import type { DshContextLike, OneConfig } from './types.js'
 import { Engine } from './core/engine.js'
 import { EffectsQueue } from './app/effects.js'
-import { MemoryStore } from './app/store.js'
+import { acquireStore } from './app/store.js'
 import { registerOneTools } from './app/tools.js'
 
 /** Cordis plugin name. */
@@ -30,6 +29,8 @@ export const Config: z<OneConfig> = z.object({
     .description('Agent-initiated actions: observe records only; active executes.'),
   allowedWorkspaceRoots: z.array(String).default([])
     .description('Workspace roots the assistant may touch; empty allows all.'),
+  maxWorkers: z.natural().min(1).max(32).default(4)
+    .description('Concurrent worker assignments.'),
 }) as unknown as z<OneConfig>
 
 /** The services this row provides to the other rows. */
@@ -37,15 +38,16 @@ export interface OneServices {
   readonly engine: Engine
   readonly effects: EffectsQueue
   readonly config: OneConfig
+  readonly backend: 'domain' | 'memory'
 }
 
 /** Mount the engine, the effect queue and the model-facing tools. */
 export async function apply(ctx: DshContextLike, config: OneConfig): Promise<void> {
   const resolved = Config(config) as OneConfig
-  const store = new MemoryStore()
-  const engine = new Engine(store.tickets)
-  const effects = new EffectsQueue(store.effects)
-  const services: OneServices = { engine, effects, config: resolved }
+  const store = await acquireStore(ctx)
+  const engine = new Engine(store, store)
+  const effects = new EffectsQueue(store)
+  const services: OneServices = { engine, effects, config: resolved, backend: store.backend }
   const provide = ctx.provide?.('oneEngine', services)
 
   ctx.effect(() => {

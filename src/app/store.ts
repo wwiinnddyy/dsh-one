@@ -1,49 +1,239 @@
 /**
- * The base store.
+ * The persistent store.
  *
- * The first base is in-memory on purpose: it proves the domain and the effect
- * queue without depending on a host storage backend. The next phase binds the
- * same ports to `ctx.storageDomain`.
+ * Reads are synchronous (the host's table surface is a local key/value read);
+ * writes are awaited so a command can report a durable result. A profile
+ * without `storageDomain` gets the same interface in memory, which keeps the
+ * plugin loadable in a bare test host.
  */
 
-import type { Ticket } from '../core/model.js'
-import type { TicketRepository } from '../core/engine.js'
+import type { Goal, Ticket } from '../core/model.js'
+import type { GoalRepository, TicketRepository } from '../core/engine.js'
 import type { EffectRecord, EffectStore } from './effects.js'
+import { oneDomainSpec } from './spec.js'
+import type { DshContextLike } from '../types.js'
 
-export class MemoryTicketRepository implements TicketRepository {
-  private readonly rows = new Map<string, Ticket>()
+export interface ManagedSessionRecord {
+  readonly sessionId: string
+  readonly role: 'router' | 'executor'
+  readonly title?: string
+  readonly cwd?: string
+  readonly status: 'active' | 'missing' | 'error'
+  readonly trusted: boolean
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly lastSeenAt?: number
+  readonly error?: string
+}
 
-  get(ticketId: string): Ticket | undefined {
-    return this.rows.get(ticketId)
+export interface SettingRecord {
+  readonly namespace: string
+  readonly key: string
+  readonly value: string
+  readonly updatedAt: number
+  readonly updatedBy: 'human' | 'agent' | 'system'
+}
+
+export interface AuditRecord {
+  readonly id: string
+  readonly at: number
+  readonly action: string
+  readonly actorSessionId?: string
+  readonly targetSessionId?: string
+  readonly ticketId?: string
+  readonly outcome: 'ok' | 'error' | 'observed'
+  readonly detail?: string
+}
+
+interface TableLike<T> {
+  get(key: string): T | undefined
+  entries(): IterableIterator<[string, T]>
+  put(key: string, value: T): Promise<void>
+  delete(key: string): Promise<boolean>
+}
+
+interface DomainLike {
+  table(name: string): TableLike<unknown>
+  close?(): Promise<void>
+}
+
+interface DomainFacilityLike {
+  open(spec: unknown): Promise<DomainLike>
+  get?(name: string): DomainLike | undefined
+}
+
+/** Everything the plugin persists, behind one narrow interface. */
+export interface Store extends TicketRepository, GoalRepository, EffectStore {
+  readonly backend: 'domain' | 'memory'
+  getTicket(ticketId: string): Ticket | undefined
+  putTicket(ticket: Ticket): Promise<void>
+  listTickets(): readonly Ticket[]
+  getGoal(goalId: string): Goal | undefined
+  putGoal(goal: Goal): Promise<void>
+  listGoals(): readonly Goal[]
+  getEffect(effectId: string): EffectRecord | undefined
+  putEffect(record: EffectRecord): Promise<void>
+  listEffects(): readonly EffectRecord[]
+  getSession(sessionId: string): ManagedSessionRecord | undefined
+  putSession(record: ManagedSessionRecord): Promise<void>
+  listSessions(): readonly ManagedSessionRecord[]
+  getSetting(namespace: string, key: string): SettingRecord | undefined
+  putSetting(record: SettingRecord): Promise<void>
+  deleteSetting(namespace: string, key: string): Promise<boolean>
+  listSettings(namespace?: string): readonly SettingRecord[]
+  appendAudit(record: AuditRecord, limit: number): Promise<void>
+  listAudit(limit?: number): readonly AuditRecord[]
+}
+
+function settingId(namespace: string, key: string): string {
+  return `${namespace}.${key}`
+}
+
+function byUpdated<T extends { readonly updatedAt: number }>(rows: readonly T[]): T[] {
+  return [...rows].sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+function byAt<T extends { readonly at: number }>(rows: readonly T[]): T[] {
+  return [...rows].sort((a, b) => b.at - a.at)
+}
+
+class MemoryTable<T> {
+  private readonly rows = new Map<string, T>()
+
+  get(key: string): T | undefined {
+    return this.rows.get(key)
   }
 
-  put(ticket: Ticket): void {
-    this.rows.set(ticket.ticketId, ticket)
+  entries(): IterableIterator<[string, T]> {
+    return [...this.rows.entries()][Symbol.iterator]()
   }
 
-  list(): readonly Ticket[] {
-    return [...this.rows.values()]
+  async put(key: string, value: T): Promise<void> {
+    this.rows.set(key, value)
+  }
+
+  async delete(key: string): Promise<boolean> {
+    return this.rows.delete(key)
   }
 }
 
-export class MemoryEffectStore implements EffectStore {
-  private readonly rows = new Map<string, EffectRecord>()
+/** In-memory implementation of the same store contract. */
+export class MemoryStore implements Store {
+  readonly backend = 'memory' as const
+  private readonly tickets = new MemoryTable<Ticket>()
+  private readonly goals = new MemoryTable<Goal>()
+  private readonly effects = new MemoryTable<EffectRecord>()
+  private readonly sessions = new MemoryTable<ManagedSessionRecord>()
+  private readonly settings = new MemoryTable<SettingRecord>()
+  private readonly audit = new MemoryTable<AuditRecord>()
 
-  get(effectId: string): EffectRecord | undefined {
-    return this.rows.get(effectId)
+  getTicket(ticketId: string): Ticket | undefined { return this.tickets.get(ticketId) }
+  async putTicket(ticket: Ticket): Promise<void> { await this.tickets.put(ticket.ticketId, ticket) }
+  listTickets(): readonly Ticket[] { return [...this.tickets.entries()].map(([, value]) => value) }
+
+  getGoal(goalId: string): Goal | undefined { return this.goals.get(goalId) }
+  async putGoal(goal: Goal): Promise<void> { await this.goals.put(goal.goalId, goal) }
+  listGoals(): readonly Goal[] { return [...this.goals.entries()].map(([, value]) => value) }
+
+  getEffect(effectId: string): EffectRecord | undefined { return this.effects.get(effectId) }
+  async putEffect(record: EffectRecord): Promise<void> { await this.effects.put(record.effectId, record) }
+  listEffects(): readonly EffectRecord[] { return [...this.effects.entries()].map(([, value]) => value) }
+
+  getSession(sessionId: string): ManagedSessionRecord | undefined { return this.sessions.get(sessionId) }
+  async putSession(record: ManagedSessionRecord): Promise<void> { await this.sessions.put(record.sessionId, record) }
+  listSessions(): readonly ManagedSessionRecord[] { return [...this.sessions.entries()].map(([, value]) => value) }
+
+  getSetting(namespace: string, key: string): SettingRecord | undefined {
+    return this.settings.get(settingId(namespace, key))
+  }
+  async putSetting(record: SettingRecord): Promise<void> {
+    await this.settings.put(settingId(record.namespace, record.key), record)
+  }
+  async deleteSetting(namespace: string, key: string): Promise<boolean> {
+    return await this.settings.delete(settingId(namespace, key))
+  }
+  listSettings(namespace?: string): readonly SettingRecord[] {
+    return [...this.settings.entries()]
+      .map(([, value]) => value)
+      .filter(item => namespace === undefined || item.namespace === namespace)
   }
 
-  list(): readonly EffectRecord[] {
-    return [...this.rows.values()]
+  async appendAudit(record: AuditRecord, limit: number): Promise<void> {
+    await this.audit.put(record.id, record)
+    const rows = byAt([...this.audit.entries()].map(([, value]) => value))
+    for (const extra of rows.slice(limit)) await this.audit.delete(extra.id)
   }
-
-  put(record: EffectRecord): void {
-    this.rows.set(record.effectId, record)
+  listAudit(limit = 50): readonly AuditRecord[] {
+    return byAt([...this.audit.entries()].map(([, value]) => value)).slice(0, limit)
   }
 }
 
-/** One memory store per plugin row, for tests and for hosts without storage. */
-export class MemoryStore {
-  readonly tickets = new MemoryTicketRepository()
-  readonly effects = new MemoryEffectStore()
+/** Storage-domain-backed implementation. */
+export class DomainStore implements Store {
+  readonly backend = 'domain' as const
+  private readonly domain: DomainLike
+
+  constructor(domain: DomainLike) {
+    this.domain = domain
+  }
+
+  private table<T>(name: string): TableLike<T> {
+    return this.domain.table(name) as TableLike<T>
+  }
+
+  getTicket(ticketId: string): Ticket | undefined { return this.table<Ticket>('tickets').get(ticketId) }
+  async putTicket(ticket: Ticket): Promise<void> { await this.table<Ticket>('tickets').put(ticket.ticketId, ticket) }
+  listTickets(): readonly Ticket[] { return [...this.table<Ticket>('tickets').entries()].map(([, value]) => value) }
+
+  getGoal(goalId: string): Goal | undefined { return this.table<Goal>('goals').get(goalId) }
+  async putGoal(goal: Goal): Promise<void> { await this.table<Goal>('goals').put(goal.goalId, goal) }
+  listGoals(): readonly Goal[] { return [...this.table<Goal>('goals').entries()].map(([, value]) => value) }
+
+  getEffect(effectId: string): EffectRecord | undefined { return this.table<EffectRecord>('effects').get(effectId) }
+  async putEffect(record: EffectRecord): Promise<void> { await this.table<EffectRecord>('effects').put(record.effectId, record) }
+  listEffects(): readonly EffectRecord[] { return [...this.table<EffectRecord>('effects').entries()].map(([, value]) => value) }
+
+  getSession(sessionId: string): ManagedSessionRecord | undefined { return this.table<ManagedSessionRecord>('sessions').get(sessionId) }
+  async putSession(record: ManagedSessionRecord): Promise<void> { await this.table<ManagedSessionRecord>('sessions').put(record.sessionId, record) }
+  listSessions(): readonly ManagedSessionRecord[] { return [...this.table<ManagedSessionRecord>('sessions').entries()].map(([, value]) => value) }
+
+  getSetting(namespace: string, key: string): SettingRecord | undefined {
+    return this.table<SettingRecord>('settings').get(settingId(namespace, key))
+  }
+  async putSetting(record: SettingRecord): Promise<void> {
+    await this.table<SettingRecord>('settings').put(settingId(record.namespace, record.key), record)
+  }
+  async deleteSetting(namespace: string, key: string): Promise<boolean> {
+    return await this.table<SettingRecord>('settings').delete(settingId(namespace, key))
+  }
+  listSettings(namespace?: string): readonly SettingRecord[] {
+    return [...this.table<SettingRecord>('settings').entries()]
+      .map(([, value]) => value)
+      .filter(item => namespace === undefined || item.namespace === namespace)
+  }
+
+  async appendAudit(record: AuditRecord, limit: number): Promise<void> {
+    await this.table<AuditRecord>('audit').put(record.id, record)
+    const rows = byAt([...this.table<AuditRecord>('audit').entries()].map(([, value]) => value))
+    for (const extra of rows.slice(limit)) await this.table<AuditRecord>('audit').delete(extra.id)
+  }
+  listAudit(limit = 50): readonly AuditRecord[] {
+    return byAt([...this.table<AuditRecord>('audit').entries()].map(([, value]) => value)).slice(0, limit)
+  }
+}
+
+/**
+ * Open the durable store when the host offers one, else the memory fallback.
+ * A domain that fails to open must not stop the plugin from loading.
+ */
+export async function acquireStore(ctx: DshContextLike): Promise<Store> {
+  const facility = ctx.get('storageDomain') as DomainFacilityLike | undefined
+  if (facility === undefined) return new MemoryStore()
+  try {
+    const existing = facility.get?.(oneDomainSpec.name)
+    if (existing !== undefined) return new DomainStore(existing)
+    return new DomainStore(await facility.open(oneDomainSpec))
+  } catch {
+    return new MemoryStore()
+  }
 }

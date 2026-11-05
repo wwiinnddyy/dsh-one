@@ -135,7 +135,7 @@ function workTool(engine: Engine, timeoutMs: number): ToolDefinitionLike {
           if (title === undefined || goal === undefined) {
             throw new Error('one/invalid-argument: title and goal are required')
           }
-          return toJson(engine.createTicket({
+          return toJson(await engine.createTicket({
             title,
             goal,
             ...(asString(record['cwd']) === undefined ? {} : { cwd: asString(record['cwd']) as string }),
@@ -146,7 +146,7 @@ function workTool(engine: Engine, timeoutMs: number): ToolDefinitionLike {
           if (ticketId === undefined) throw new Error('one/invalid-argument: ticketId is required')
           const sessionId = asString(record['sessionId'])
           if (sessionId === undefined) throw new Error('one/invalid-argument: sessionId is required')
-          return toJson(engine.assign({
+          return toJson(await engine.assign({
             ticketId,
             sessionId,
             ...(asString(record['assignmentId']) === undefined ? {} : { assignmentId: asString(record['assignmentId']) as string }),
@@ -161,7 +161,7 @@ function workTool(engine: Engine, timeoutMs: number): ToolDefinitionLike {
           if (assignmentId === undefined || sessionId === undefined || kind === undefined || summary === undefined) {
             throw new Error('one/invalid-argument: assignmentId, sessionId, reportKind and summary are required')
           }
-          return toJson(engine.report({
+          return toJson(await engine.report({
             ticketId,
             assignmentId,
             sessionId,
@@ -175,15 +175,15 @@ function workTool(engine: Engine, timeoutMs: number): ToolDefinitionLike {
           if (ticketId === undefined) throw new Error('one/invalid-argument: ticketId is required')
           const text = asString(record['text'])
           if (text === undefined) throw new Error('one/invalid-argument: text is required')
-          return toJson(engine.answer({ ticketId, answer: text }))
+          return toJson(await engine.answer({ ticketId, answer: text }))
         }
         case 'complete': {
           if (ticketId === undefined) throw new Error('one/invalid-argument: ticketId is required')
-          return toJson(engine.complete({ ticketId, ...(asString(record['text']) === undefined ? {} : { reason: asString(record['text']) as string }) }))
+          return toJson(await engine.complete({ ticketId, ...(asString(record['text']) === undefined ? {} : { reason: asString(record['text']) as string }) }))
         }
         case 'stop': {
           if (ticketId === undefined) throw new Error('one/invalid-argument: ticketId is required')
-          return toJson(engine.stop({ ticketId, ...(asString(record['text']) === undefined ? {} : { reason: asString(record['text']) as string }) }))
+          return toJson(await engine.stop({ ticketId, ...(asString(record['text']) === undefined ? {} : { reason: asString(record['text']) as string }) }))
         }
         default:
           throw new Error(`one/invalid-argument: unknown action "${action}"`)

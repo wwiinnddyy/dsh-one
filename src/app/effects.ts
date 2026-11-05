@@ -26,9 +26,9 @@ export interface EffectRecord {
 }
 
 export interface EffectStore {
-  get(effectId: string): EffectRecord | undefined
-  list(): readonly EffectRecord[]
-  put(record: EffectRecord): void
+  getEffect(effectId: string): EffectRecord | undefined
+  listEffects(): readonly EffectRecord[]
+  putEffect(record: EffectRecord): Promise<void>
 }
 
 export type EffectHandler = (payload: unknown, record: EffectRecord) => void | Promise<void>
@@ -64,18 +64,13 @@ export class EffectsQueue {
    * pending, re-enqueuing replaces its payload and makes it due now instead of
    * growing the queue.
    */
-  enqueue(kind: EffectKind, key: string, payload: unknown, dueAt?: number): EffectRecord {
+  async enqueue(kind: EffectKind, key: string, payload: unknown, dueAt?: number): Promise<EffectRecord> {
     const at = this.now()
-    const waiting = this.store.list().find(item =>
+    const waiting = this.store.listEffects().find(item =>
       item.kind === kind && item.key === key && item.status === 'pending')
     if (waiting !== undefined) {
-      const replaced: EffectRecord = {
-        ...waiting,
-        payload,
-        dueAt: dueAt ?? at,
-        updatedAt: at,
-      }
-      this.store.put(replaced)
+      const replaced: EffectRecord = { ...waiting, payload, dueAt: dueAt ?? at, updatedAt: at }
+      await this.store.putEffect(replaced)
       return replaced
     }
     const record: EffectRecord = {
@@ -89,13 +84,13 @@ export class EffectsQueue {
       createdAt: at,
       updatedAt: at,
     }
-    this.store.put(record)
+    await this.store.putEffect(record)
     return record
   }
 
   /** Pending rows in execution order. */
   pending(): readonly EffectRecord[] {
-    return this.store.list()
+    return this.store.listEffects()
       .filter(item => item.status === 'pending')
       .sort((a, b) => a.createdAt - b.createdAt || a.effectId.localeCompare(b.effectId))
   }
@@ -117,23 +112,23 @@ export class EffectsQueue {
         attempts: record.attempts + 1,
         updatedAt: this.now(),
       }
-      this.store.put(running)
+      await this.store.putEffect(running)
       const handler = this.handlers.get(record.kind)
       if (handler === undefined) {
-        this.store.put({ ...running, status: 'failed', error: `no handler for ${record.kind}`, updatedAt: this.now() })
+        await this.store.putEffect({ ...running, status: 'failed', error: `no handler for ${record.kind}`, updatedAt: this.now() })
         failed += 1
         continue
       }
       try {
         await handler(record.payload, running)
-        this.store.put({ ...running, status: 'done', updatedAt: this.now() })
+        await this.store.putEffect({ ...running, status: 'done', updatedAt: this.now() })
       } catch (error: unknown) {
         failed += 1
         const message = error instanceof Error ? error.message : String(error)
         if (running.attempts >= this.maxAttempts) {
-          this.store.put({ ...running, status: 'failed', error: message, updatedAt: this.now() })
+          await this.store.putEffect({ ...running, status: 'failed', error: message, updatedAt: this.now() })
         } else {
-          this.store.put({
+          await this.store.putEffect({
             ...running,
             status: 'pending',
             dueAt: this.now() + this.retryBaseMs * 2 ** (running.attempts - 1),
@@ -144,5 +139,22 @@ export class EffectsQueue {
       }
     }
     return { processed, failed }
+  }
+
+  /** Reset effects left `running` by a host crash so they can be retried. */
+  async recover(): Promise<number> {
+    let recovered = 0
+    for (const record of this.store.listEffects()) {
+      if (record.status !== 'running') continue
+      await this.store.putEffect({
+        ...record,
+        status: 'pending',
+        dueAt: this.now(),
+        error: 'recovered after host restart',
+        updatedAt: this.now(),
+      })
+      recovered += 1
+    }
+    return recovered
   }
 }

@@ -53,4 +53,6 @@ export interface OneConfig {
   readonly mode: OneMode
   /** Workspace roots the assistant may touch; empty allows all. */
   readonly allowedWorkspaceRoots: readonly string[]
+  /** Concurrent worker assignments. */
+  readonly maxWorkers: number
 }
