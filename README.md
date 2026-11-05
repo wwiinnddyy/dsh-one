@@ -2,7 +2,7 @@
 
 DSH One 是一个面向 DeepSeek Harness 的**通用工作区助手**：聊天是主入口，助手可以跨工作区观察、派活、推进目标，并在需要人决定时回来找你。
 
-> 版本：`0.3.0-alpha.0`（完整重写版，旧实现保留在 git tag `legacy-0.2.0`）。
+> 版本：`0.3.0`（完整重写版，旧实现保留在 git tag `legacy-0.2.0`）。
 > 架构依据：DeepSeek Harness 的 Super-agent 设计（Router/Worker 双层、事件驱动、Effect 持久队列、单一写者）。
 > 评审与决策记录：[docs/architecture-review.md](docs/architecture-review.md)。
 

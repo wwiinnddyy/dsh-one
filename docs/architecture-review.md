@@ -379,7 +379,7 @@ src/
 6. **对外工具面**：**收敛成统一入口工具**。初版为 `one_work`（create/assign/report/answer/complete/stop）+ `one_status`。
 7. **执行方式**：**删库重建**。旧实现已归档到 git tag `legacy-0.2.0`，新基座从零开始。
 
-### 基座 v0.3.0-alpha.0 已落地
+### 基座 v0.3.0 已落地
 
 - `src/core/model.ts` — Ticket / Goal / Assignment / Report / Attention
 - `src/core/stage.ts` — Ticket 阶段表
@@ -389,7 +389,7 @@ src/
 - `src/app/tools.ts` — `one_work` / `one_status`
 - 63 个测试全绿
 
-### 实施进度（0.3.0-alpha.0）
+### 实施进度（0.3.0）
 
 | 阶段 | 状态 | 产出 |
 |---|---|---|
