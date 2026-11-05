@@ -235,6 +235,14 @@ export interface OneConfig {
      */
     readonly assistantHomeRoot: string;
     readonly mode: OneMode;
+    /**
+     * Whether the assistant's own sends deliver while `mode` is `observe`.
+     *
+     * The assistant is the user's proxy, so its sends are the user speaking
+     * through it; other agents stay bound by `mode`. `observe` records them
+     * instead, which is what a dry-run profile wants.
+     */
+    readonly assistantSendMode: OneMode;
     readonly allowAllSessions: boolean;
     readonly allowedSessionIds: readonly string[];
     readonly allowedWorkspaceRoots: readonly string[];
@@ -257,6 +265,8 @@ export type WorkspaceMode = 'lease' | 'shared';
 /** Delegate row configuration. */
 export interface DelegateConfig {
     readonly taskMode: TaskMode;
+    /** Whether a run started from the assistant session executes or only records. */
+    readonly assistantRunMode: 'execute' | 'observe';
     readonly maxWorkers: number;
     readonly workspaceMode: WorkspaceMode;
     readonly leaseTtlMs: number;
@@ -270,6 +280,14 @@ export interface DelegateConfig {
     readonly reportMaxChars: number;
     readonly commandTimeoutMs: number;
     readonly defaultTaskPriority: number;
+    /** Maximum steps one run may create (1-20). */
+    readonly runMaxTasks: number;
+    /** Default wall-clock budget one run may use. */
+    readonly runDeadlineMs: number;
+    /** Window in which run events are merged into one decision. */
+    readonly wakeCoalesceMs: number;
+    /** Host-side watchdog period for run projections and deadlines. */
+    readonly watchdogTickMs: number;
 }
 export interface TaskUsage {
     readonly inputTokens: number;
@@ -339,6 +357,13 @@ export interface TaskRecord {
     readonly attention?: TaskAttention;
     readonly mandateId?: string;
     readonly source?: TaskSourceRef;
+    /** The run this task is one step of, when it was planned by a run. */
+    readonly runId?: string;
+    /**
+     * The assistant header frozen at creation time, so a retry or recovery prompt
+     * keeps the name the task was created under even after the assistant is renamed.
+     */
+    readonly assistantLabel?: string;
     readonly usage: TaskUsage;
     readonly tokenBudget: number;
     readonly createdBy?: string;
@@ -370,6 +395,7 @@ export interface CreateTaskInput {
     readonly createdBy?: string;
     readonly mandateId?: string;
     readonly source?: TaskSourceRef;
+    readonly runId?: string;
 }
 export interface CreateTaskResult {
     readonly task: TaskRecord;
@@ -402,11 +428,19 @@ export interface TaskView extends TaskRecord {
     readonly assignment?: TaskAssignment;
 }
 export interface TaskCreateOptions {
-    readonly source: 'tool' | 'command' | 'source';
+    /** `assistant` is the user-directed assistant session; it bypasses `taskMode: observe`. */
+    readonly source: 'tool' | 'command' | 'source' | 'assistant';
+    /** Explicit posture for a run step; overrides the source-based default. */
+    readonly mode?: 'execute' | 'observed';
     readonly callerSessionId?: string;
     readonly callerCwd?: string;
     readonly taskId?: string;
     readonly autoAssign?: boolean;
+    /**
+     * Origin header frozen onto the task, so every prompt this task ever sends
+     * carries the name it was created under. Only the assistant path sets it.
+     */
+    readonly assistantLabel?: string;
 }
 export interface PanelTask {
     readonly id: string;
@@ -441,6 +475,181 @@ export interface TaskService {
         readonly workers: number;
         readonly maxWorkers: number;
     };
+    subscribe(listener: () => void): () => void;
+}
+export type RunMode = 'execute' | 'observed';
+export type RunOrigin = 'human' | 'assistant' | 'agent';
+export type RunStatus = 'active' | 'needs-you' | 'done' | 'failed' | 'cancelled' | 'exhausted';
+export type RunWakeReason = 'done' | 'needs-you' | 'failed';
+/** One planned step. The task row owns its state; this is the plan only. */
+export interface RunStep {
+    readonly index: number;
+    readonly taskId: string;
+    readonly title: string;
+    readonly goal: string;
+    readonly cwd?: string;
+}
+export interface RunLimits {
+    readonly maxTasks: number;
+    readonly deadlineMs: number;
+}
+/** Durable goal ledger row. */
+export interface RunRecord {
+    readonly runId: string;
+    readonly goal: string;
+    readonly title: string;
+    readonly cwd: string;
+    readonly cwdLabel: string;
+    readonly origin: RunOrigin;
+    readonly mode: RunMode;
+    readonly assistantSessionId?: string;
+    readonly status: RunStatus;
+    readonly paused: boolean;
+    readonly pauseReason?: string;
+    readonly steps: readonly RunStep[];
+    readonly limits: RunLimits;
+    readonly deadlineAt: number;
+    /** Monotonic counter for activity rows. */
+    readonly activitySeq: number;
+    /** Last observed task status per step, so a transition is written once. */
+    readonly seen: Readonly<Record<string, string>>;
+    readonly attention?: {
+        readonly reason: string;
+        readonly taskId?: string;
+        readonly since: number;
+    };
+    readonly verdict?: string;
+    readonly createdAt: number;
+    readonly updatedAt: number;
+    readonly terminalAt?: number;
+}
+export interface RunStepView extends RunStep {
+    readonly status: TaskStatus;
+    readonly latestReport?: string;
+    readonly attention?: string;
+    readonly updatedAt?: number;
+}
+/** A run plus the current projection of its steps. */
+export interface RunView {
+    readonly runId: string;
+    readonly goal: string;
+    readonly title: string;
+    readonly cwd: string;
+    readonly cwdLabel: string;
+    readonly origin: RunOrigin;
+    readonly mode: RunMode;
+    readonly assistantSessionId?: string;
+    readonly status: RunStatus;
+    readonly paused: boolean;
+    readonly pauseReason?: string;
+    readonly steps: readonly RunStepView[];
+    readonly limits: RunLimits;
+    readonly deadlineAt: number;
+    readonly attention?: {
+        readonly reason: string;
+        readonly taskId?: string;
+        readonly since: number;
+    };
+    readonly verdict?: string;
+    readonly createdAt: number;
+    readonly updatedAt: number;
+    readonly terminalAt?: number;
+    readonly progress: {
+        readonly done: number;
+        readonly total: number;
+    };
+    readonly elapsedMs: number;
+}
+export type RunActivityKind = 'run-started' | 'step-dispatched' | 'step-done' | 'step-failed' | 'step-blocked' | 'run-done' | 'run-failed' | 'run-paused' | 'run-resumed' | 'run-cancelled' | 'run-exhausted' | 'quiet-suppressed' | 'wake-sent' | 'wake-suppressed' | 'recovered';
+/** One user-facing activity row; `audit` stays operator-facing. */
+export interface RunActivityRecord {
+    readonly activityId: string;
+    readonly runId: string;
+    readonly seq: number;
+    readonly taskId?: string;
+    readonly cwd: string;
+    readonly at: number;
+    readonly kind: RunActivityKind;
+    readonly level: 'info' | 'attention' | 'error';
+    readonly title: string;
+    readonly detail?: string;
+    readonly dedupeKey?: string;
+}
+export interface RunWakeRecord {
+    readonly wakeId: string;
+    readonly runId: string;
+    readonly reason: RunWakeReason;
+    readonly requestId: string;
+    readonly status: 'pending' | 'sending' | 'sent' | 'suppressed' | 'failed' | 'unknown';
+    readonly suppressedBy?: string;
+    readonly attempts: number;
+    readonly createdAt: number;
+    readonly updatedAt: number;
+    readonly error?: string;
+}
+export interface RunStartInput {
+    readonly goal: string;
+    readonly title?: string;
+    readonly cwd?: string;
+    readonly steps?: readonly {
+        readonly title: string;
+        readonly goal: string;
+        readonly cwd?: string;
+    }[];
+    readonly maxTasks?: number;
+    readonly deadlineMs?: number;
+    readonly idempotencyKey?: string;
+    readonly origin: RunOrigin;
+    readonly callerSessionId?: string;
+    readonly callerCwd?: string;
+    readonly mode?: RunMode;
+}
+export interface RunStartResult {
+    readonly run: RunView;
+    readonly observed: boolean;
+}
+export interface RunControlInput {
+    readonly runId: string;
+    readonly action: 'pause' | 'resume' | 'cancel';
+    readonly reason?: string;
+}
+export interface RunGroup {
+    readonly cwd: string;
+    readonly label: string;
+    readonly runs: readonly RunView[];
+    readonly counts: {
+        readonly active: number;
+        readonly needsYou: number;
+        readonly done: number;
+        readonly failed: number;
+        readonly paused: number;
+    };
+}
+export interface RunSummary {
+    readonly generatedAt: number;
+    readonly assistant: {
+        readonly sessionId: string | null;
+        readonly displayName: string;
+    };
+    readonly pausedAll: boolean;
+    readonly groups: readonly RunGroup[];
+    readonly totals: {
+        readonly active: number;
+        readonly needsYou: number;
+        readonly done: number;
+        readonly failed: number;
+        readonly paused: number;
+    };
+}
+/** The run service the delegate row provides to tools, commands, and the panel. */
+export interface RunService {
+    readonly mode: 'execute' | 'observe';
+    start(input: RunStartInput): Promise<RunStartResult>;
+    get(runId: string): RunView | undefined;
+    list(): RunView[];
+    summary(): RunSummary;
+    activities(runId?: string, limit?: number): RunActivityRecord[];
+    control(input: RunControlInput): Promise<RunView>;
     subscribe(listener: () => void): () => void;
 }
 /** Intake row configuration. */
@@ -664,6 +873,14 @@ export interface PanelOverview {
     readonly attention: readonly PanelItem[];
     readonly running: readonly PanelItem[];
     readonly history: readonly PanelItem[];
+    readonly runs?: {
+        readonly active: number;
+        readonly needsYou: number;
+        readonly done: number;
+        readonly failed: number;
+        readonly paused: number;
+        readonly mode: 'execute' | 'observe';
+    };
     readonly health: {
         readonly storage: 'persistent' | 'memory';
         readonly core: 'ready' | 'degraded';
@@ -696,9 +913,14 @@ export interface OutboxRecord {
     readonly requestId: string;
     readonly callerSessionId?: string;
     readonly targetSessionId: string;
+    /** The raw text the caller supplied; conflict checks and audit read this. */
     readonly text: string;
+    /** The text actually handed to the host: `text` plus the origin header, when one applies. */
+    readonly deliveredText?: string;
+    /** The origin header that was applied, kept so a retry delivers the same bytes. */
+    readonly senderLabel?: string;
     readonly mode: 'queue' | 'steer';
-    readonly source: 'tool' | 'command';
+    readonly source: 'tool' | 'command' | 'wake' | 'assistant';
     readonly status: OutboxStatus;
     readonly attempts: number;
     readonly createdAt: number;
@@ -738,7 +960,13 @@ export interface SendInput {
     readonly requestId?: string;
     readonly mode?: 'queue' | 'steer';
     readonly callerSessionId?: string;
-    readonly source: 'tool' | 'command';
+    /** `assistant` is the user-directed assistant session; it carries a visible origin tag. */
+    readonly source: 'tool' | 'command' | 'wake' | 'assistant';
+    /**
+     * Visible header prepended to the delivered text. Honored only for
+     * `source: 'assistant'`, so no other path can forge an assistant origin.
+     */
+    readonly senderLabel?: string;
     readonly signal?: AbortSignal;
 }
 export interface SendResult {
@@ -781,4 +1009,32 @@ export interface SessionView {
     readonly model?: ModelSelection;
     readonly status?: 'active' | 'missing' | 'error';
     readonly lastSeenAt?: number;
+}
+/** What the assistant asks `one_session_create` for. */
+export interface SessionCreateInput {
+    readonly cwd: string;
+    /** The first message the new session receives, tagged with the assistant's header. */
+    readonly message: string;
+    /**
+     * Plugin-side label only. DSH derives the conversation title itself and
+     * `sessionController.create` has no title field, so this never renames the chat.
+     */
+    readonly title?: string;
+    readonly agentPreset?: string;
+    readonly idempotencyKey?: string;
+    readonly callerSessionId?: string;
+    /** The assistant origin header applied to the first message; set by the tool gate. */
+    readonly senderLabel?: string;
+    readonly signal?: AbortSignal;
+}
+export interface SessionCreateResult {
+    readonly sessionId: string;
+    readonly title?: string;
+    readonly cwd: string;
+    /** False when an earlier call with the same idempotency key had already created it. */
+    readonly created: boolean;
+    readonly messageStatus: OutboxStatus;
+    readonly requestId?: string;
+    readonly observed: boolean;
+    readonly error?: string;
 }

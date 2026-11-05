@@ -112,38 +112,3 @@ export function selectNotifications(
   return chosen
 }
 
-/**
- * Turn one finished assist run into notification candidates.
- *
- * Deliberately produces at most one candidate: a run is one thing the user
- * asked about, so it earns one message, not one per task.
- */
-export function candidatesFromOutcome(
-  outcome: {
-    readonly status: string
-    readonly createdTasks: readonly string[]
-    readonly completed: readonly string[]
-    readonly failed: readonly string[]
-    readonly blocked: readonly string[]
-    readonly detail: string
-  },
-  at: number,
-  key: string,
-): readonly NotifyCandidate[] {
-  const reason: NotifyReason = outcome.status === 'completed'
-    ? 'done'
-    : outcome.blocked.length > 0
-      ? 'needs-you'
-      : 'failed'
-  return [{
-    reason,
-    key: `${key}:${outcome.status}`,
-    title: reason === 'done'
-      ? '计划已完成'
-      : reason === 'needs-you'
-        ? '需要你决定'
-        : '计划没跑成',
-    detail: outcome.detail,
-    at,
-  }]
-}

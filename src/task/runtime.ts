@@ -125,7 +125,9 @@ export class TaskRuntime implements TaskService {
 
   /** Create one task. Agent-initiated tools observe by default. */
   async createTask(input: CreateTaskInput, options: CreateTaskOptions): Promise<CreateTaskResult> {
-    if (options.source === 'tool' && this.config.taskMode === 'observe') {
+    const observeOnly = options.mode === 'observed'
+      || (options.mode === undefined && options.source === 'tool' && this.config.taskMode === 'observe')
+    if (observeOnly) {
       await this.core.audit({
         action: 'task_observed',
         actorSessionId: options.callerSessionId,
@@ -147,7 +149,7 @@ export class TaskRuntime implements TaskService {
       const workInput: TaskInput = {
         inputId,
         kind: 'work',
-        text: this.workText(taskId, input.title, input.goal, cwd),
+        text: this.workText(taskId, input.title, input.goal, cwd, options.assistantLabel),
         requestId: taskInputRequestId(taskId, inputId),
         createdAt: at,
         deliveryStatus: 'pending',
@@ -165,6 +167,9 @@ export class TaskRuntime implements TaskService {
         inputs: [workInput],
         ...(input.mandateId === undefined ? {} : { mandateId: input.mandateId }),
         ...(input.source === undefined ? {} : { source: input.source }),
+        ...(input.runId === undefined ? {} : { runId: input.runId }),
+        // Frozen at creation: a retry after a rename keeps the original name.
+        ...(options.assistantLabel === undefined ? {} : { assistantLabel: options.assistantLabel }),
         usage: emptyUsage(),
         tokenBudget: input.tokenBudget ?? this.config.tokenBudget,
         ...(input.createdBy ?? options.callerSessionId) === undefined
@@ -968,13 +973,16 @@ export class TaskRuntime implements TaskService {
       inputs: [],
       usage: emptyUsage(),
       tokenBudget: input.tokenBudget ?? this.config.tokenBudget,
+      ...(input.runId === undefined ? {} : { runId: input.runId }),
+      ...(options.assistantLabel === undefined ? {} : { assistantLabel: options.assistantLabel }),
       createdAt: at,
       updatedAt: at,
     }
   }
 
-  private workText(taskId: string, title: string, goal: string, cwd: string): string {
+  private workText(taskId: string, title: string, goal: string, cwd: string, label?: string): string {
     return [
+      ...(label === undefined ? [] : [label, '']),
       `[DSH One task ${taskId}]`,
       `Task: ${title}`,
       '',
@@ -991,6 +999,9 @@ export class TaskRuntime implements TaskService {
 
   private recoveryText(task: TaskRecord, reason: string | undefined): string {
     return [
+      // Read from the task, not the live name: a retry must say what the first
+      // prompt said even after the assistant was renamed.
+      ...(task.assistantLabel === undefined ? [] : [task.assistantLabel, '']),
       `[DSH One task ${task.taskId} · retry]`,
       `Previous attempt: ${reason ?? task.blockedReason ?? 'unknown'}`,
       '',

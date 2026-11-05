@@ -49,6 +49,8 @@ export declare const outboxSchema: z.ZodObject<{
     callerSessionId: z.ZodOptional<z.ZodString>;
     targetSessionId: z.ZodString;
     text: z.ZodString;
+    deliveredText: z.ZodOptional<z.ZodString>;
+    senderLabel: z.ZodOptional<z.ZodString>;
     mode: z.ZodEnum<{
         queue: "queue";
         steer: "steer";
@@ -56,14 +58,16 @@ export declare const outboxSchema: z.ZodObject<{
     source: z.ZodEnum<{
         tool: "tool";
         command: "command";
+        assistant: "assistant";
+        wake: "wake";
     }>;
     status: z.ZodEnum<{
+        observed: "observed";
         failed: "failed";
         cancelled: "cancelled";
         unknown: "unknown";
         pending: "pending";
         sent: "sent";
-        observed: "observed";
         sending: "sending";
     }>;
     attempts: z.ZodNumber;
@@ -81,8 +85,8 @@ export declare const auditSchema: z.ZodObject<{
     taskId: z.ZodOptional<z.ZodString>;
     requestId: z.ZodOptional<z.ZodString>;
     outcome: z.ZodEnum<{
-        error: "error";
         observed: "observed";
+        error: "error";
         ok: "ok";
     }>;
     detail: z.ZodOptional<z.ZodString>;
@@ -103,13 +107,13 @@ export declare const assignmentSchema: z.ZodObject<{
     }>;
     sessionId: z.ZodString;
     status: z.ZodEnum<{
+        done: "done";
+        failed: "failed";
+        cancelled: "cancelled";
+        ready: "ready";
         assigned: "assigned";
         running: "running";
         waiting: "waiting";
-        ready: "ready";
-        failed: "failed";
-        done: "done";
-        cancelled: "cancelled";
         unknown: "unknown";
     }>;
     promptStatus: z.ZodEnum<{
@@ -148,10 +152,10 @@ export declare const inputSchema: z.ZodObject<{
 export declare const reportSchema: z.ZodObject<{
     reportId: z.ZodString;
     kind: z.ZodEnum<{
-        waiting: "waiting";
-        ready: "ready";
-        blocked: "blocked";
         failed: "failed";
+        blocked: "blocked";
+        ready: "ready";
+        waiting: "waiting";
         progress: "progress";
         dropped: "dropped";
     }>;
@@ -165,9 +169,9 @@ export declare const reportSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const attentionSchema: z.ZodObject<{
     kind: z.ZodEnum<{
-        waiting: "waiting";
-        blocked: "blocked";
         failed: "failed";
+        blocked: "blocked";
+        waiting: "waiting";
         report: "report";
         budget: "budget";
         mandate: "mandate";
@@ -186,15 +190,15 @@ export declare const taskSchema: z.ZodObject<{
     title: z.ZodString;
     goal: z.ZodString;
     status: z.ZodEnum<{
-        queued: "queued";
+        done: "done";
+        failed: "failed";
+        cancelled: "cancelled";
+        blocked: "blocked";
+        ready: "ready";
         assigned: "assigned";
         running: "running";
+        queued: "queued";
         waiting: "waiting";
-        ready: "ready";
-        blocked: "blocked";
-        failed: "failed";
-        done: "done";
-        cancelled: "cancelled";
     }>;
     origin: z.ZodEnum<{
         human: "human";
@@ -215,13 +219,13 @@ export declare const taskSchema: z.ZodObject<{
         }>;
         sessionId: z.ZodString;
         status: z.ZodEnum<{
+            done: "done";
+            failed: "failed";
+            cancelled: "cancelled";
+            ready: "ready";
             assigned: "assigned";
             running: "running";
             waiting: "waiting";
-            ready: "ready";
-            failed: "failed";
-            done: "done";
-            cancelled: "cancelled";
             unknown: "unknown";
         }>;
         promptStatus: z.ZodEnum<{
@@ -260,10 +264,10 @@ export declare const taskSchema: z.ZodObject<{
     latestReport: z.ZodOptional<z.ZodObject<{
         reportId: z.ZodString;
         kind: z.ZodEnum<{
-            waiting: "waiting";
-            ready: "ready";
-            blocked: "blocked";
             failed: "failed";
+            blocked: "blocked";
+            ready: "ready";
+            waiting: "waiting";
             progress: "progress";
             dropped: "dropped";
         }>;
@@ -277,9 +281,9 @@ export declare const taskSchema: z.ZodObject<{
     }, z.core.$strip>>;
     attention: z.ZodOptional<z.ZodObject<{
         kind: z.ZodEnum<{
-            waiting: "waiting";
-            blocked: "blocked";
             failed: "failed";
+            blocked: "blocked";
+            waiting: "waiting";
             report: "report";
             budget: "budget";
             mandate: "mandate";
@@ -294,6 +298,8 @@ export declare const taskSchema: z.ZodObject<{
         externalId: z.ZodString;
         url: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>;
+    runId: z.ZodOptional<z.ZodString>;
+    assistantLabel: z.ZodOptional<z.ZodString>;
     usage: z.ZodObject<{
         inputTokens: z.ZodNumber;
         outputTokens: z.ZodNumber;
@@ -326,10 +332,10 @@ export declare const leaseSchema: z.ZodObject<{
 export declare const reportRowSchema: z.ZodObject<{
     reportId: z.ZodString;
     kind: z.ZodEnum<{
-        waiting: "waiting";
-        ready: "ready";
-        blocked: "blocked";
         failed: "failed";
+        blocked: "blocked";
+        ready: "ready";
+        waiting: "waiting";
         progress: "progress";
         dropped: "dropped";
     }>;
@@ -395,8 +401,8 @@ export declare const evalSchema: z.ZodObject<{
     triggerId: z.ZodString;
     threadId: z.ZodString;
     status: z.ZodEnum<{
-        queued: "queued";
         running: "running";
+        queued: "queued";
         settled: "settled";
     }>;
     policyVersion: z.ZodString;
@@ -536,6 +542,119 @@ export declare const settingSchema: z.ZodObject<{
         system: "system";
     }>;
 }, z.core.$strip>;
+export declare const runStepSchema: z.ZodObject<{
+    index: z.ZodNumber;
+    taskId: z.ZodString;
+    title: z.ZodString;
+    goal: z.ZodString;
+    cwd: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const runSchema: z.ZodObject<{
+    runId: z.ZodString;
+    goal: z.ZodString;
+    title: z.ZodString;
+    cwd: z.ZodString;
+    cwdLabel: z.ZodString;
+    origin: z.ZodEnum<{
+        human: "human";
+        agent: "agent";
+        assistant: "assistant";
+    }>;
+    mode: z.ZodEnum<{
+        execute: "execute";
+        observed: "observed";
+    }>;
+    assistantSessionId: z.ZodOptional<z.ZodString>;
+    status: z.ZodEnum<{
+        done: "done";
+        failed: "failed";
+        cancelled: "cancelled";
+        exhausted: "exhausted";
+        "needs-you": "needs-you";
+        active: "active";
+    }>;
+    paused: z.ZodBoolean;
+    pauseReason: z.ZodOptional<z.ZodString>;
+    steps: z.ZodArray<z.ZodObject<{
+        index: z.ZodNumber;
+        taskId: z.ZodString;
+        title: z.ZodString;
+        goal: z.ZodString;
+        cwd: z.ZodOptional<z.ZodString>;
+    }, z.core.$strip>>;
+    limits: z.ZodObject<{
+        maxTasks: z.ZodNumber;
+        deadlineMs: z.ZodNumber;
+    }, z.core.$strip>;
+    deadlineAt: z.ZodNumber;
+    activitySeq: z.ZodNumber;
+    seen: z.ZodRecord<z.ZodString, z.ZodString>;
+    attention: z.ZodOptional<z.ZodObject<{
+        reason: z.ZodString;
+        taskId: z.ZodOptional<z.ZodString>;
+        since: z.ZodNumber;
+    }, z.core.$strip>>;
+    verdict: z.ZodOptional<z.ZodString>;
+    createdAt: z.ZodNumber;
+    updatedAt: z.ZodNumber;
+    terminalAt: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strip>;
+export declare const runActivitySchema: z.ZodObject<{
+    activityId: z.ZodString;
+    runId: z.ZodString;
+    seq: z.ZodNumber;
+    taskId: z.ZodOptional<z.ZodString>;
+    cwd: z.ZodString;
+    at: z.ZodNumber;
+    kind: z.ZodEnum<{
+        "run-started": "run-started";
+        "step-dispatched": "step-dispatched";
+        "step-done": "step-done";
+        "step-failed": "step-failed";
+        "step-blocked": "step-blocked";
+        "run-done": "run-done";
+        "run-failed": "run-failed";
+        "run-paused": "run-paused";
+        "run-resumed": "run-resumed";
+        "run-cancelled": "run-cancelled";
+        "run-exhausted": "run-exhausted";
+        "quiet-suppressed": "quiet-suppressed";
+        "wake-sent": "wake-sent";
+        "wake-suppressed": "wake-suppressed";
+        recovered: "recovered";
+    }>;
+    level: z.ZodEnum<{
+        error: "error";
+        attention: "attention";
+        info: "info";
+    }>;
+    title: z.ZodString;
+    detail: z.ZodOptional<z.ZodString>;
+    dedupeKey: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const runWakeSchema: z.ZodObject<{
+    wakeId: z.ZodString;
+    runId: z.ZodString;
+    reason: z.ZodEnum<{
+        done: "done";
+        failed: "failed";
+        "needs-you": "needs-you";
+    }>;
+    requestId: z.ZodString;
+    status: z.ZodEnum<{
+        failed: "failed";
+        unknown: "unknown";
+        pending: "pending";
+        sent: "sent";
+        sending: "sending";
+        suppressed: "suppressed";
+    }>;
+    suppressedBy: z.ZodOptional<z.ZodString>;
+    attempts: z.ZodNumber;
+    createdAt: z.ZodNumber;
+    updatedAt: z.ZodNumber;
+    error: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
 /** Domain declaration consumed by `ctx.storageDomain.open`. */
 export declare const oneDomainSpec: {
     name: string;
@@ -564,12 +683,14 @@ export declare const oneDomainSpec: {
             targetSessionId: string;
             text: string;
             mode: "queue" | "steer";
-            source: "tool" | "command";
-            status: "failed" | "cancelled" | "unknown" | "pending" | "sent" | "observed" | "sending";
+            source: "tool" | "command" | "assistant" | "wake";
+            status: "observed" | "failed" | "cancelled" | "unknown" | "pending" | "sent" | "sending";
             attempts: number;
             createdAt: number;
             updatedAt: number;
             callerSessionId?: string | undefined;
+            deliveredText?: string | undefined;
+            senderLabel?: string | undefined;
             completedAt?: number | undefined;
             error?: string | undefined;
         }>;
@@ -577,7 +698,7 @@ export declare const oneDomainSpec: {
             id: string;
             at: number;
             action: string;
-            outcome: "error" | "observed" | "ok";
+            outcome: "observed" | "error" | "ok";
             actorSessionId?: string | undefined;
             targetSessionId?: string | undefined;
             taskId?: string | undefined;
@@ -588,7 +709,7 @@ export declare const oneDomainSpec: {
             taskId: string;
             title: string;
             goal: string;
-            status: "queued" | "assigned" | "running" | "waiting" | "ready" | "blocked" | "failed" | "done" | "cancelled";
+            status: "done" | "failed" | "cancelled" | "blocked" | "ready" | "assigned" | "running" | "queued" | "waiting";
             origin: "human" | "agent" | "source";
             priority: number;
             cwd: string;
@@ -597,7 +718,7 @@ export declare const oneDomainSpec: {
                 assignmentId: string;
                 kind: "initial" | "retry";
                 sessionId: string;
-                status: "assigned" | "running" | "waiting" | "ready" | "failed" | "done" | "cancelled" | "unknown";
+                status: "done" | "failed" | "cancelled" | "ready" | "assigned" | "running" | "waiting" | "unknown";
                 promptStatus: "failed" | "unknown" | "pending" | "sent";
                 promptRequestId: string;
                 createdAt: number;
@@ -629,7 +750,7 @@ export declare const oneDomainSpec: {
             updatedAt: number;
             latestReport?: {
                 reportId: string;
-                kind: "waiting" | "ready" | "blocked" | "failed" | "progress" | "dropped";
+                kind: "failed" | "blocked" | "ready" | "waiting" | "progress" | "dropped";
                 summary: string;
                 assignmentId: string;
                 sessionId: string;
@@ -639,7 +760,7 @@ export declare const oneDomainSpec: {
                 evidence?: string | undefined;
             } | undefined;
             attention?: {
-                kind: "waiting" | "blocked" | "failed" | "report" | "budget" | "mandate";
+                kind: "failed" | "blocked" | "waiting" | "report" | "budget" | "mandate";
                 reason: string;
                 since: number;
             } | undefined;
@@ -650,6 +771,8 @@ export declare const oneDomainSpec: {
                 externalId: string;
                 url?: string | undefined;
             } | undefined;
+            runId?: string | undefined;
+            assistantLabel?: string | undefined;
             createdBy?: string | undefined;
             completedAt?: number | undefined;
             blockedReason?: string | undefined;
@@ -666,7 +789,7 @@ export declare const oneDomainSpec: {
         }>;
         reports: DomainTableSpec<{
             reportId: string;
-            kind: "waiting" | "ready" | "blocked" | "failed" | "progress" | "dropped";
+            kind: "failed" | "blocked" | "ready" | "waiting" | "progress" | "dropped";
             summary: string;
             assignmentId: string;
             sessionId: string;
@@ -713,7 +836,7 @@ export declare const oneDomainSpec: {
             evalId: string;
             triggerId: string;
             threadId: string;
-            status: "queued" | "running" | "settled";
+            status: "running" | "queued" | "settled";
             policyVersion: string;
             gate: "pass" | "reject";
             createdAt: number;
@@ -801,6 +924,67 @@ export declare const oneDomainSpec: {
             value: string;
             updatedAt: number;
             updatedBy: "human" | "agent" | "system";
+        }>;
+        runs: DomainTableSpec<{
+            runId: string;
+            goal: string;
+            title: string;
+            cwd: string;
+            cwdLabel: string;
+            origin: "human" | "agent" | "assistant";
+            mode: "execute" | "observed";
+            status: "done" | "failed" | "cancelled" | "exhausted" | "needs-you" | "active";
+            paused: boolean;
+            steps: {
+                index: number;
+                taskId: string;
+                title: string;
+                goal: string;
+                cwd?: string | undefined;
+            }[];
+            limits: {
+                maxTasks: number;
+                deadlineMs: number;
+            };
+            deadlineAt: number;
+            activitySeq: number;
+            seen: Record<string, string>;
+            createdAt: number;
+            updatedAt: number;
+            assistantSessionId?: string | undefined;
+            pauseReason?: string | undefined;
+            attention?: {
+                reason: string;
+                since: number;
+                taskId?: string | undefined;
+            } | undefined;
+            verdict?: string | undefined;
+            terminalAt?: number | undefined;
+        }>;
+        run_activities: DomainTableSpec<{
+            activityId: string;
+            runId: string;
+            seq: number;
+            cwd: string;
+            at: number;
+            kind: "run-started" | "step-dispatched" | "step-done" | "step-failed" | "step-blocked" | "run-done" | "run-failed" | "run-paused" | "run-resumed" | "run-cancelled" | "run-exhausted" | "quiet-suppressed" | "wake-sent" | "wake-suppressed" | "recovered";
+            level: "error" | "attention" | "info";
+            title: string;
+            taskId?: string | undefined;
+            detail?: string | undefined;
+            dedupeKey?: string | undefined;
+        }>;
+        run_wakes: DomainTableSpec<{
+            wakeId: string;
+            runId: string;
+            reason: "done" | "failed" | "needs-you";
+            requestId: string;
+            status: "failed" | "unknown" | "pending" | "sent" | "sending" | "suppressed";
+            attempts: number;
+            createdAt: number;
+            updatedAt: number;
+            suppressedBy?: string | undefined;
+            error?: string | undefined;
         }>;
     };
 };

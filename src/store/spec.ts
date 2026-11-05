@@ -81,8 +81,11 @@ export const outboxSchema = z.object({
   callerSessionId: z.string().optional(),
   targetSessionId: z.string(),
   text: z.string(),
+  // Optional so rows written by an older build still load.
+  deliveredText: z.string().optional(),
+  senderLabel: z.string().optional(),
   mode: z.enum(['queue', 'steer']),
-  source: z.enum(['tool', 'command']),
+  source: z.enum(['tool', 'command', 'wake', 'assistant']),
   status: z.enum(['pending', 'sending', 'sent', 'observed', 'failed', 'unknown', 'cancelled']),
   attempts: nonNegative,
   createdAt: nonNegative,
@@ -177,6 +180,8 @@ export const taskSchema = z.object({
   attention: attentionSchema.optional(),
   mandateId: z.string().optional(),
   source: sourceRefSchema.optional(),
+  runId: z.string().optional(),
+  assistantLabel: z.string().optional(),
   usage: usageSchema,
   tokenBudget: nonNegative,
   createdBy: z.string().optional(),
@@ -340,6 +345,73 @@ export const settingSchema = z.object({
   updatedBy: z.enum(['human', 'agent', 'system']),
 })
 
+export const runStepSchema = z.object({
+  index: nonNegative,
+  taskId: z.string(),
+  title: z.string(),
+  goal: z.string(),
+  cwd: z.string().optional(),
+})
+
+export const runSchema = z.object({
+  runId: z.string(),
+  goal: z.string(),
+  title: z.string(),
+  cwd: z.string(),
+  cwdLabel: z.string(),
+  origin: z.enum(['human', 'assistant', 'agent']),
+  mode: z.enum(['execute', 'observed']),
+  assistantSessionId: z.string().optional(),
+  status: z.enum(['active', 'needs-you', 'done', 'failed', 'cancelled', 'exhausted']),
+  paused: z.boolean(),
+  pauseReason: z.string().optional(),
+  steps: z.array(runStepSchema),
+  limits: z.object({ maxTasks: nonNegative, deadlineMs: nonNegative }),
+  deadlineAt: nonNegative,
+  activitySeq: nonNegative,
+  seen: z.record(z.string(), z.string()),
+  attention: z.object({
+    reason: z.string(),
+    taskId: z.string().optional(),
+    since: nonNegative,
+  }).optional(),
+  verdict: z.string().optional(),
+  createdAt: nonNegative,
+  updatedAt: nonNegative,
+  terminalAt: nonNegative.optional(),
+})
+
+export const runActivitySchema = z.object({
+  activityId: z.string(),
+  runId: z.string(),
+  seq: nonNegative,
+  taskId: z.string().optional(),
+  cwd: z.string(),
+  at: nonNegative,
+  kind: z.enum([
+    'run-started', 'step-dispatched', 'step-done', 'step-failed', 'step-blocked',
+    'run-done', 'run-failed', 'run-paused', 'run-resumed', 'run-cancelled', 'run-exhausted',
+    'quiet-suppressed', 'wake-sent', 'wake-suppressed', 'recovered',
+  ]),
+  level: z.enum(['info', 'attention', 'error']),
+  title: z.string(),
+  detail: z.string().optional(),
+  dedupeKey: z.string().optional(),
+})
+
+export const runWakeSchema = z.object({
+  wakeId: z.string(),
+  runId: z.string(),
+  reason: z.enum(['done', 'needs-you', 'failed']),
+  requestId: z.string(),
+  status: z.enum(['pending', 'sending', 'sent', 'suppressed', 'failed', 'unknown']),
+  suppressedBy: z.string().optional(),
+  attempts: nonNegative,
+  createdAt: nonNegative,
+  updatedAt: nonNegative,
+  error: z.string().optional(),
+})
+
 /** Domain declaration consumed by `ctx.storageDomain.open`. */
 export const oneDomainSpec = defineDomain({
   name: 'dsh_one',
@@ -362,5 +434,8 @@ export const oneDomainSpec = defineDomain({
     cursors: domainTable(cursorSchema),
     subscriptions: domainTable(subscriptionSchema),
     settings: domainTable(settingSchema),
+    runs: domainTable(runSchema),
+    run_activities: domainTable(runActivitySchema),
+    run_wakes: domainTable(runWakeSchema),
   },
 })

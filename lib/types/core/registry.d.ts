@@ -1,5 +1,5 @@
 /** dsh-one core: registry, access policy, outbox, audit, and host adapters. */
-import type { AgentLike, AuditRecord, DshContextLike, ManagedSessionRecord, OneConfig, OutboxRecord, SelectModelInput, SelectModelResult, SendInput, SendResult, SessionView } from '../types.js';
+import type { AgentLike, AuditRecord, DshContextLike, ManagedSessionRecord, OneConfig, OutboxRecord, SelectModelInput, SelectModelResult, SendInput, SendResult, SessionCreateInput, SessionCreateResult, SessionView } from '../types.js';
 import { OneStore } from '../store/store.js';
 import type { WorkspaceOverview } from './workspaces.js';
 /** Directory name the assistant owns under the configured home root. */
@@ -63,6 +63,8 @@ export declare class OneCore {
         cwd?: string;
         title?: string;
     }): Promise<ManagedSessionRecord>;
+    /** Write the trusted-session row and its audit entry. Shared by every creation path. */
+    private trustSession;
     get storeRef(): OneStore;
     /** Whether a workspace is inside the configured allowlist (an empty list allows all). */
     isWorkspaceAllowed(cwd: string): boolean;
@@ -117,6 +119,20 @@ export declare class OneCore {
     createAssistantSession(home: string, title: string): Promise<{
         readonly sessionId: string;
     }>;
+    /**
+     * Create one ordinary DSH session on the assistant's behalf, then deliver its
+     * first message with the assistant's origin header.
+     *
+     * The order is fixed — create, trust, send — because `assertOperable` refuses
+     * an unregistered target. A send failure still returns the session id: the
+     * caller must never lose a session it just made, and the trust row already
+     * landed, so a retry with the same key resumes from the outbox instead of
+     * creating a second session.
+     *
+     * `title` is this plugin's own label. `sessionController.create` has no title
+     * field and DSH derives the conversation title itself.
+     */
+    createSession(input: SessionCreateInput): Promise<SessionCreateResult>;
     /**
      * Make the assistant introduce itself in its own conversation.
      *

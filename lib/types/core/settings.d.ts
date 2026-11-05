@@ -35,6 +35,11 @@ export declare const NOTIFY_MUTED_KEY = "notifyMuted";
  * stored here, because it is not editable.
  */
 export declare const PERSONA_KEY = "persona";
+/** Stop dispatch and wakeups for every run, without cancelling live workers. */
+export declare const RUNS_PAUSED_KEY = "runsPaused";
+/** Local-minute quiet window, 0-1439. `from === to` disables it. */
+export declare const QUIET_FROM_KEY = "quietFrom";
+export declare const QUIET_TO_KEY = "quietTo";
 /** Longest accepted name, in Unicode code points. */
 export declare const DISPLAY_NAME_MAX_CHARS = 24;
 /** Version counter bumping on every accepted change, so live surfaces can react. */
@@ -63,6 +68,17 @@ export interface SettingsService {
     notifyMuted(): boolean;
     /** Set the mute switch. */
     setNotifyMuted(muted: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    /** Whether every run is globally paused. */
+    runsPaused(): boolean;
+    /** Pause or resume dispatch and wakeups for every run. */
+    setRunsPaused(paused: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    /** The local-minute quiet window; either end absent means disabled. */
+    quietHours(): {
+        readonly from?: number;
+        readonly to?: number;
+    };
+    /** Replace the quiet window; pass `undefined` for both to disable it. */
+    setQuietHours(from: number | undefined, to: number | undefined, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     /** The user's own behaviour text, or `undefined` to use the built-in default. */
     persona(): string | undefined;
     /** Replace the behaviour text after validating it. */
@@ -100,12 +116,20 @@ export declare class OneSettings implements SettingsService {
     setAssistantHome(path: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     notifyMuted(): boolean;
     setNotifyMuted(muted: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    runsPaused(): boolean;
+    setRunsPaused(paused: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
+    quietHours(): {
+        readonly from?: number;
+        readonly to?: number;
+    };
+    setQuietHours(from: number | undefined, to: number | undefined, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     persona(): string | undefined;
     setPersona(text: string, updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     clearPersona(updatedBy?: SettingRecord['updatedBy']): Promise<void>;
     list(): readonly SettingRecord[];
     subscribe(listener: () => void): () => void;
     private readOverride;
+    private readMinute;
     private emit;
 }
 /** Acquire the service from a context that already mounted the core row. */

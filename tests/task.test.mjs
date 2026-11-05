@@ -263,6 +263,48 @@ test('agent task tools observe without creating a task by default', async () => 
   await env.dispose()
 })
 
+const LABEL = '[来自助手「鲸宝」]'
+
+test('an assistant task prompt carries the origin header and keeps it across a retry', async () => {
+  const env = await createEnv({ delegateConfig: { taskMode: 'active', maxWorkers: 1, retryLimit: 2, tokenBudget: 0 } })
+  await env.settings.setAssistantSessionId('assistant')
+  const created = await env.tools.get('one_task_create').execute({
+    title: 'Check the inbox',
+    goal: 'Summarize what needs doing today.',
+    cwd: 'C:\\work',
+    assign: true,
+  }, { agent: makeAgent('assistant', 'C:\\work'), signal: AbortSignal.timeout(5000) })
+
+  const task = env.taskService.getTask(created.taskId)
+  assert.equal(task.assistantLabel, LABEL)
+  assert.match(task.inputs[0].text, /^\[来自助手「鲸宝」\]\n\n\[DSH One task /u)
+  assert.match(env.controller.calls.prompt[0].content[0].text, /^\[来自助手「鲸宝」\]\n\n/u)
+
+  // A rename must not rewrite a retry: the label is frozen at creation time.
+  await env.settings.setName('新名字')
+  await env.taskService.blockTask(task.taskId, 'host-restarted')
+  await env.taskService.control({ taskId: task.taskId, action: 'retry', reason: 'pretend crash' })
+  const recovery = env.taskService.getTask(task.taskId).inputs.find(item => item.kind === 'recovery')
+  assert.ok(recovery !== undefined)
+  assert.match(recovery.text, /^\[来自助手「鲸宝」\]\n\n\[DSH One task /u)
+  await env.dispose()
+})
+
+test('a non-assistant task prompt has no origin header', async () => {
+  const env = await createEnv({ delegateConfig: { taskMode: 'active', maxWorkers: 1, tokenBudget: 0 } })
+  await env.settings.setAssistantSessionId('assistant')
+  const created = await env.tools.get('one_task_create').execute({
+    title: 'Plain task',
+    goal: 'plain work',
+    cwd: 'C:\\work',
+    assign: true,
+  }, { agent: makeAgent('caller', 'C:\\work'), signal: AbortSignal.timeout(5000) })
+
+  const task = env.taskService.getTask(created.taskId)
+  assert.equal(task.assistantLabel, undefined)
+  assert.match(task.inputs[0].text, /^\[DSH One task /u)
+  await env.dispose()
+})
 test('a turn ending without a report blocks the task', async () => {
   const env = await createEnv({ delegateConfig: { taskMode: 'active', maxWorkers: 1, tokenBudget: 0 } })
   const created = await startTask(env)

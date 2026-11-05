@@ -1,5 +1,5 @@
 /** Durable state for dsh-one, backed by `ctx.storageDomain` with an in-memory fallback. */
-import type { AuditRecord, CursorRecord, DecisionRecord, DeliveryRecord, DshContextLike, EvalRecord, LeaseRecord, MandateRecord, ManagedSessionRecord, OneConfig, OutboxRecord, PolicyRecord, ReportRecord, SettingRecord, SubscriptionRecord, TaskRecord, ThreadRecord, TriggerRecord } from '../types.js';
+import type { AuditRecord, CursorRecord, DecisionRecord, DeliveryRecord, DshContextLike, EvalRecord, LeaseRecord, MandateRecord, ManagedSessionRecord, OneConfig, OutboxRecord, PolicyRecord, ReportRecord, RunActivityRecord, RunRecord, RunWakeRecord, SettingRecord, SubscriptionRecord, TaskRecord, ThreadRecord, TriggerRecord } from '../types.js';
 /** One opened storage surface over the shared `dsh-one` domain. */
 export declare class OneStore {
     readonly degraded: boolean;
@@ -20,6 +20,9 @@ export declare class OneStore {
     private readonly cursorTable;
     private readonly subscriptionTable;
     private readonly settingTable;
+    private readonly runTable;
+    private readonly runActivityTable;
+    private readonly runWakeTable;
     private readonly config;
     private constructor();
     /** Build one store; the caller owns recovery and lifecycle. */
@@ -70,6 +73,17 @@ export declare class OneStore {
     putCursor(record: CursorRecord): Promise<void>;
     getSubscription(id: string): SubscriptionRecord | undefined;
     putSubscription(record: SubscriptionRecord): Promise<void>;
+    getRun(runId: string): RunRecord | undefined;
+    listRuns(): RunRecord[];
+    putRun(record: RunRecord): Promise<void>;
+    /** Single-key atomic read-modify-write for every run transition. */
+    updateRun(runId: string, fn: (current: RunRecord) => RunRecord): Promise<RunRecord>;
+    getRunActivity(activityId: string): RunActivityRecord | undefined;
+    listRunActivities(runId?: string, limit?: number): RunActivityRecord[];
+    appendRunActivity(record: RunActivityRecord): Promise<void>;
+    private trimRunActivities;
+    getRunWake(wakeId: string): RunWakeRecord | undefined;
+    putRunWake(record: RunWakeRecord): Promise<void>;
     /**
      * One preference row; `namespace` scopes the key to its owning surface.
      *

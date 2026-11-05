@@ -9,11 +9,14 @@ import type {
   ModelSelection,
   OneConfig,
   OutboxRecord,
+  OutboxStatus,
   SelectModelInput,
   SelectModelResult,
   SendInput,
   SendResult,
   SessionControllerLike,
+  SessionCreateInput,
+  SessionCreateResult,
   SessionSummary,
   SessionView,
 } from '../types.js'
@@ -21,12 +24,14 @@ import { OneError as OneErrorClass } from '../types.js'
 import { OneStore } from '../store/store.js'
 import { buildWorkspaceOverview } from './workspaces.js'
 import type { WorkspaceOverview } from './workspaces.js'
+import { withSenderLabel } from './sender.js'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
   asString,
   classifyError,
+  hashOf,
   isAbortError,
   isRetryable,
   isSubagentRefusal,
@@ -337,6 +342,21 @@ export class OneCore {
    * allowlist posture without requiring a human `/one sessions add`.
    */
   async trustWorkerSession(input: { sessionId: string; cwd?: string; title?: string }): Promise<ManagedSessionRecord> {
+    return await this.trustSession({
+      ...input,
+      action: 'worker_session_registered',
+      detail: input.cwd === undefined ? 'worker session' : preview(input.cwd),
+    })
+  }
+
+  /** Write the trusted-session row and its audit entry. Shared by every creation path. */
+  private async trustSession(input: {
+    sessionId: string
+    cwd?: string
+    title?: string
+    action: string
+    detail?: string
+  }): Promise<ManagedSessionRecord> {
     this.assertSessionId(input.sessionId)
     const at = this.now()
     const existing = this.store.getSession(input.sessionId)
@@ -354,10 +374,10 @@ export class OneCore {
     }
     await this.store.putSession(record)
     await this.audit({
-      action: 'worker_session_registered',
+      action: input.action,
       targetSessionId: input.sessionId,
       outcome: 'ok',
-      detail: input.cwd === undefined ? 'worker session' : preview(input.cwd),
+      ...(input.detail === undefined ? {} : { detail: input.detail }),
     })
     return record
   }
@@ -403,12 +423,19 @@ export class OneCore {
     const target = await this.resolveTarget(input.targetSessionId)
     this.assertOperable(target, input.callerSessionId)
 
+    // The origin header is only honored for the assistant path: every other
+    // source would otherwise be able to claim it is the assistant.
+    const senderLabel = input.source === 'assistant' ? input.senderLabel : undefined
+    const deliveredText = senderLabel === undefined ? undefined : withSenderLabel(senderLabel, input.text)
+
     const at = this.now()
     const base: OutboxRecord = {
       requestId,
       ...(input.callerSessionId === undefined ? {} : { callerSessionId: input.callerSessionId }),
       targetSessionId: input.targetSessionId,
       text: input.text,
+      ...(deliveredText === undefined ? {} : { deliveredText }),
+      ...(senderLabel === undefined ? {} : { senderLabel }),
       mode,
       source: input.source,
       status: 'pending',
@@ -417,7 +444,12 @@ export class OneCore {
       updatedAt: at,
     }
 
-    if (input.source === 'tool' && this.config.mode === 'observe') {
+    // The assistant speaks as the user's proxy, so `assistantSendMode` decides
+    // its sends independently of the agent-facing `mode`.
+    const observeOnly = this.config.mode === 'observe'
+      && (input.source === 'tool'
+        || (input.source === 'assistant' && this.config.assistantSendMode === 'observe'))
+    if (observeOnly) {
       const observed: OutboxRecord = { ...base, status: 'observed' }
       await this.store.putOutbox(observed)
       await this.audit({
@@ -491,7 +523,7 @@ export class OneCore {
             requestId: base.requestId,
             sessionId: base.targetSessionId,
             mode: base.mode,
-            content: [{ type: 'text', text: base.text }],
+            content: [{ type: 'text', text: base.deliveredText ?? base.text }],
           },
           signal,
         )
@@ -910,6 +942,102 @@ export class OneCore {
       detail: `${title} @ ${home}`,
     })
     return { sessionId: created.sessionId }
+  }
+
+  /**
+   * Create one ordinary DSH session on the assistant's behalf, then deliver its
+   * first message with the assistant's origin header.
+   *
+   * The order is fixed — create, trust, send — because `assertOperable` refuses
+   * an unregistered target. A send failure still returns the session id: the
+   * caller must never lose a session it just made, and the trust row already
+   * landed, so a retry with the same key resumes from the outbox instead of
+   * creating a second session.
+   *
+   * `title` is this plugin's own label. `sessionController.create` has no title
+   * field and DSH derives the conversation title itself.
+   */
+  async createSession(input: SessionCreateInput): Promise<SessionCreateResult> {
+    if (!this.config.allowSessionCreation) {
+      throw new OneErrorClass('one/session-creation-disabled', 'session creation is disabled in this profile', {})
+    }
+    const cwd = input.cwd.trim()
+    if (cwd === '') throw new OneErrorClass('one/invalid-argument', 'cwd is required')
+    if (input.message.trim() === '') throw new OneErrorClass('one/invalid-argument', 'message must not be blank')
+    if (input.message.length > this.config.maxMessageChars) {
+      throw new OneErrorClass('one/message-too-long', `message exceeds ${this.config.maxMessageChars} characters`, {
+        length: input.message.length,
+        max: this.config.maxMessageChars,
+      })
+    }
+    this.assertWorkspaceAllowed(cwd)
+
+    const key = input.idempotencyKey?.trim()
+    const fingerprint = key === undefined || key === '' ? undefined : hashOf({ key, cwd })
+    const requestId = fingerprint === undefined ? undefined : `one:session-create:${fingerprint}`
+    if (requestId !== undefined) {
+      const existing = this.store.getOutbox(requestId)
+      if (existing !== undefined) {
+        return {
+          sessionId: existing.targetSessionId,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          cwd,
+          created: false,
+          messageStatus: existing.status,
+          requestId,
+          observed: existing.status === 'observed',
+          ...(existing.error === undefined ? {} : { error: existing.error }),
+        }
+      }
+    }
+
+    const controller = this.requireController()
+    const wantedSessionId = fingerprint === undefined ? undefined : `session-${fingerprint}`
+    const created = await controller.create({
+      cwd,
+      ...(wantedSessionId === undefined ? {} : { sessionId: wantedSessionId }),
+      ...(input.agentPreset === undefined || input.agentPreset === '' ? {} : { agentPreset: input.agentPreset }),
+    })
+    await this.trustSession({
+      sessionId: created.sessionId,
+      cwd,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      action: 'session_created',
+      detail: input.title === undefined ? preview(cwd) : `${input.title} @ ${cwd}`,
+    })
+
+    let messageStatus: OutboxStatus = 'pending'
+    let error: string | undefined
+    let usedRequestId = requestId
+    try {
+      const sent = await this.send({
+        targetSessionId: created.sessionId,
+        text: input.message,
+        ...(requestId === undefined ? {} : { requestId }),
+        ...(input.callerSessionId === undefined ? {} : { callerSessionId: input.callerSessionId }),
+        ...(input.senderLabel === undefined ? {} : { senderLabel: input.senderLabel }),
+        source: 'assistant',
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      })
+      messageStatus = sent.status
+      usedRequestId = sent.requestId
+      error = sent.error
+    } catch (sendError: unknown) {
+      // The session exists and is trusted; surface the delivery failure rather
+      // than throwing away the id the caller needs to follow up.
+      messageStatus = 'failed'
+      error = classifyError(sendError).message
+    }
+    return {
+      sessionId: created.sessionId,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      cwd,
+      created: true,
+      messageStatus,
+      ...(usedRequestId === undefined ? {} : { requestId: usedRequestId }),
+      observed: messageStatus === 'observed',
+      ...(error === undefined ? {} : { error }),
+    }
   }
 
   /**

@@ -14,6 +14,9 @@ import type {
   OutboxRecord,
   PolicyRecord,
   ReportRecord,
+  RunActivityRecord,
+  RunRecord,
+  RunWakeRecord,
   SettingRecord,
   SubscriptionRecord,
   TaskRecord,
@@ -107,6 +110,9 @@ export class OneStore {
   private readonly cursorTable: TableLike<CursorRecord>
   private readonly subscriptionTable: TableLike<SubscriptionRecord>
   private readonly settingTable: TableLike<SettingRecord>
+  private readonly runTable: TableLike<RunRecord>
+  private readonly runActivityTable: TableLike<RunActivityRecord>
+  private readonly runWakeTable: TableLike<RunWakeRecord>
   private readonly config: OneConfig
 
   private constructor(config: OneConfig, domain: DomainLike | undefined, degraded: boolean) {
@@ -131,6 +137,9 @@ export class OneStore {
     this.cursorTable = table('cursors', new MemoryTable<CursorRecord>())
     this.subscriptionTable = table('subscriptions', new MemoryTable<SubscriptionRecord>())
     this.settingTable = table('settings', new MemoryTable<SettingRecord>())
+    this.runTable = table('runs', new MemoryTable<RunRecord>())
+    this.runActivityTable = table('run_activities', new MemoryTable<RunActivityRecord>())
+    this.runWakeTable = table('run_wakes', new MemoryTable<RunWakeRecord>())
   }
 
   /** Build one store; the caller owns recovery and lifecycle. */
@@ -262,6 +271,42 @@ export class OneStore {
     await this.subscriptionTable.put(record.subscriptionId, record)
   }
 
+  // ---- runs ---------------------------------------------------------------------
+  getRun(runId: string): RunRecord | undefined { return this.runTable.get(runId) }
+  listRuns(): RunRecord[] {
+    return [...this.runTable.entries()].map(([, record]) => record).sort((a, b) => b.createdAt - a.createdAt)
+  }
+  async putRun(record: RunRecord): Promise<void> { await this.runTable.put(record.runId, record) }
+  /** Single-key atomic read-modify-write for every run transition. */
+  async updateRun(runId: string, fn: (current: RunRecord) => RunRecord): Promise<RunRecord> {
+    return await this.runTable.update(runId, fn)
+  }
+
+  getRunActivity(activityId: string): RunActivityRecord | undefined {
+    return this.runActivityTable.get(activityId)
+  }
+  listRunActivities(runId?: string, limit = 200): RunActivityRecord[] {
+    const rows = [...this.runActivityTable.entries()]
+      .map(([, record]) => record)
+      .filter(record => runId === undefined || record.runId === runId)
+    return rows.sort((a, b) => b.at - a.at || b.seq - a.seq).slice(0, limit)
+  }
+  async appendRunActivity(record: RunActivityRecord): Promise<void> {
+    await this.runActivityTable.put(record.activityId, record)
+    await this.trimRunActivities(record.runId)
+  }
+  private async trimRunActivities(runId: string): Promise<void> {
+    const rows = [...this.runActivityTable.entries()].map(([key, record]) => ({ key, record }))
+    const perRun = rows.filter(row => row.record.runId === runId).sort((a, b) => a.record.at - b.record.at)
+    for (const row of perRun.slice(0, Math.max(0, perRun.length - 200))) await this.runActivityTable.delete(row.key)
+    if (rows.length <= 2_000) return
+    const oldest = rows.sort((a, b) => a.record.at - b.record.at)
+    for (const row of oldest.slice(0, rows.length - 2_000)) await this.runActivityTable.delete(row.key)
+  }
+
+  getRunWake(wakeId: string): RunWakeRecord | undefined { return this.runWakeTable.get(wakeId) }
+  async putRunWake(record: RunWakeRecord): Promise<void> { await this.runWakeTable.put(record.wakeId, record) }
+
   // ---- settings -----------------------------------------------------------------
   /**
    * One preference row; `namespace` scopes the key to its owning surface.
@@ -301,6 +346,15 @@ export class OneStore {
         status: 'unknown',
         updatedAt: Date.now(),
         error: 'process stopped while the send was in flight; outcome is unknown',
+      })
+    }
+    for (const [, wake] of this.runWakeTable.entries()) {
+      if (wake.status !== 'sending' && wake.status !== 'pending') continue
+      await this.putRunWake({
+        ...wake,
+        status: 'unknown',
+        updatedAt: Date.now(),
+        error: 'process stopped while the wake was in flight; outcome is unknown',
       })
     }
     await this.trimAudit(this.config.auditLimit)

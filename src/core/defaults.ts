@@ -8,6 +8,7 @@ export function defaultCoreConfig(): OneConfig {
     displayName: '鲸宝',
     assistantHomeRoot: '',
     mode: 'active',
+    assistantSendMode: 'active',
     allowAllSessions: true,
     allowedSessionIds: [],
     allowedWorkspaceRoots: [],

@@ -1,8 +1,21 @@
-/** The `one_sessions`, `one_send`, and `one_model` model-facing tools. */
+/** The `one_sessions`, `one_send`, `one_model`, and `one_session_create` model-facing tools. */
 
-import type { AgentLike, DshContextLike, OneConfig, SelectModelResult, SendResult, SessionView, ToolDefinitionLike, ToolRunContextLike } from '../types.js'
+import type {
+  AgentLike,
+  DshContextLike,
+  OneConfig,
+  SelectModelResult,
+  SendResult,
+  SessionCreateResult,
+  SessionView,
+  ToolDefinitionLike,
+  ToolRunContextLike,
+} from '../types.js'
 import { OneError } from '../types.js'
 import { OneCore, agentSessionId } from './registry.js'
+import { defaultCoreConfig } from './defaults.js'
+import { senderLabelFor } from './sender.js'
+import { settingsService } from './settings.js'
 import { asBoolean, asRecord, asString } from '../util.js'
 
 const sessionsParameters = {
@@ -119,13 +132,58 @@ const modelOutput = {
   required: ['sessionId', 'provider', 'model', 'selected', 'observed', 'fallbackUsed'],
 } as const
 
-/** Register the three tools. */
-export function registerOneTools(ctx: DshContextLike, core: OneCore, config: OneConfig): () => void {
+/** Who the assistant is, as far as these tools are concerned. */
+export interface OneToolOptions {
+  /** The assistant's own session id; only that caller gets the assistant posture. */
+  readonly assistantSessionId?: () => string | undefined
+  /** The name rendered in the origin header. */
+  readonly assistantName?: () => string
+}
+
+/** Resolved assistant identity. Read lazily so a rename or a new session reaches the next call. */
+interface AssistantIdentity {
+  sessionId(): string | undefined
+  name(): string
+  /** Whether this caller is the assistant's own session. */
+  owns(callerSessionId: string | undefined): boolean
+  /** The origin header this build would apply right now. */
+  label(): string
+}
+
+/**
+ * Resolve the assistant identity from explicit options, else from the settings
+ * service the core row provides. A profile that mounted neither still works:
+ * no caller is the assistant, so no send is tagged.
+ */
+function assistantIdentity(ctx: DshContextLike, options: OneToolOptions | undefined): AssistantIdentity {
+  const settings = settingsService(ctx)
+  const readSession = options?.assistantSessionId ?? (() => settings?.assistantSessionId())
+  const readName = options?.assistantName ?? (() => settings?.displayName() ?? defaultCoreConfig().displayName)
+  return {
+    sessionId: readSession,
+    name: readName,
+    owns(callerSessionId) {
+      if (callerSessionId === undefined) return false
+      return readSession() === callerSessionId
+    },
+    label: () => senderLabelFor(readName()),
+  }
+}
+
+/** Register the session, send, model, workspace, and session-create tools. */
+export function registerOneTools(
+  ctx: DshContextLike,
+  core: OneCore,
+  config: OneConfig,
+  options?: OneToolOptions,
+): () => void {
+  const identity = assistantIdentity(ctx, options)
   const disposers = [
     ctx.tools.register(sessionsTool(core, config)),
-    ctx.tools.register(sendTool(core, config)),
+    ctx.tools.register(sendTool(core, config, identity)),
     ctx.tools.register(modelTool(core, config)),
     ctx.tools.register(workspacesTool(core, config)),
+    ctx.tools.register(sessionCreateTool(core, config, identity)),
   ]
   return () => {
     for (const dispose of disposers.reverse()) dispose()
@@ -302,10 +360,10 @@ function sessionsTool(core: OneCore, config: OneConfig): ToolDefinitionLike {
   }
 }
 
-function sendTool(core: OneCore, config: OneConfig): ToolDefinitionLike {
+function sendTool(core: OneCore, config: OneConfig, identity: AssistantIdentity): ToolDefinitionLike {
   return {
     name: 'one_send',
-    description: 'Send a user message to another ordinary DSH session. In observe mode this records the intended send without delivering it. Reuse requestId for idempotent retries.',
+    description: 'Send a user message to another ordinary DSH session. Messages sent from the assistant session carry a visible origin header; other callers do not. In observe mode this records the intended send without delivering it. Reuse requestId for idempotent retries.',
     parameters: sendParameters,
     timeoutMs: config.commandTimeoutMs,
     output: {
@@ -329,13 +387,18 @@ function sendTool(core: OneCore, config: OneConfig): ToolDefinitionLike {
       if (mode !== undefined && mode !== 'queue' && mode !== 'steer') {
         throw new OneError('one/invalid-argument', 'mode must be queue or steer')
       }
+      const callerSessionId = agentSessionId(agent)
+      // Only the assistant's own session speaks with the assistant posture; any
+      // other agent, and the human `/one send` path, keeps the plain tool source.
+      const isAssistant = identity.owns(callerSessionId)
       return core.send({
         targetSessionId: sessionId,
         text,
         ...(requestId === undefined ? {} : { requestId }),
         ...(mode === undefined ? {} : { mode }),
-        callerSessionId: agentSessionId(agent),
-        source: 'tool',
+        callerSessionId,
+        source: isAssistant ? 'assistant' : 'tool',
+        ...(isAssistant ? { senderLabel: identity.label() } : {}),
         signal: exec.signal,
       })
     },
@@ -373,6 +436,106 @@ function modelTool(core: OneCore, config: OneConfig): ToolDefinitionLike {
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
         callerSessionId: agentSessionId(agent),
         source: 'tool',
+        signal: exec.signal,
+      })
+    },
+  }
+}
+
+const sessionCreateParameters = {
+  type: 'object',
+  properties: {
+    cwd: { type: 'string', description: 'Absolute workspace directory the new session lives in.' },
+    message: {
+      type: 'string',
+      description: 'First message the new session receives. Delivered with the assistant origin header.',
+    },
+    title: {
+      type: 'string',
+      description: 'Label kept in this plugin\'s registry only. DSH derives the conversation title itself.',
+    },
+    agentPreset: { type: 'string', description: 'Optional agent preset id used to compose the new session.' },
+    idempotencyKey: {
+      type: 'string',
+      description: 'Reusing this key returns the session created earlier instead of making another.',
+    },
+  },
+  required: ['cwd', 'message'],
+  additionalProperties: false,
+} as const
+
+const sessionCreateOutput = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    sessionId: { type: 'string' },
+    title: { type: 'string' },
+    cwd: { type: 'string' },
+    created: { type: 'boolean' },
+    messageStatus: {
+      type: 'string',
+      enum: ['pending', 'sending', 'sent', 'observed', 'failed', 'unknown', 'cancelled'],
+    },
+    requestId: { type: 'string' },
+    observed: { type: 'boolean' },
+    error: { type: 'string' },
+  },
+  required: ['sessionId', 'cwd', 'created', 'messageStatus', 'observed'],
+} as const
+
+/**
+ * Create a new ordinary session on the assistant's behalf.
+ *
+ * Gated twice: the deployment must allow creation, and the caller must be the
+ * assistant's own session. A worker or another agent cannot use this to grow
+ * the session list.
+ */
+function sessionCreateTool(core: OneCore, config: OneConfig, identity: AssistantIdentity): ToolDefinitionLike {
+  return {
+    name: 'one_session_create',
+    description:
+      'Create a new ordinary DSH session in a workspace and deliver its first message with the assistant origin header. '
+      + 'Only the assistant session may call this. Reuse idempotencyKey to retry without creating a second session.',
+    parameters: sessionCreateParameters,
+    timeoutMs: config.commandTimeoutMs,
+    output: {
+      schema: sessionCreateOutput,
+      render(_args, value) {
+        const result = value as SessionCreateResult
+        const state = result.observed ? 'observed (not delivered)' : result.messageStatus
+        const title = result.title === undefined ? '' : ` "${result.title}"`
+        return [{
+          type: 'text',
+          text: `one_session_create ${result.sessionId}: ${result.created ? 'created' : 'existing'}${title}, first message ${state}${result.error === undefined ? '' : `, error=${result.error}`}`,
+        }]
+      },
+    },
+    async execute(args, exec) {
+      const agent = requireAgent(exec)
+      const record = asRecord(args)
+      const cwd = asString(record?.['cwd'])
+      const message = asString(record?.['message'])
+      if (cwd === undefined || message === undefined) {
+        throw new OneError('one/invalid-argument', 'cwd and message are required')
+      }
+      if (identity.sessionId() === undefined) {
+        throw new OneError('one/assistant-unavailable', 'no assistant session is set up yet; open the assistant first')
+      }
+      const callerSessionId = agentSessionId(agent)
+      if (!identity.owns(callerSessionId)) {
+        throw new OneError('one/assistant-only', 'only the assistant session may create sessions')
+      }
+      const title = asString(record?.['title'])
+      const agentPreset = asString(record?.['agentPreset'])
+      const idempotencyKey = asString(record?.['idempotencyKey'])
+      return core.createSession({
+        cwd,
+        message,
+        ...(title === undefined ? {} : { title }),
+        ...(agentPreset === undefined ? {} : { agentPreset }),
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        ...(callerSessionId === undefined ? {} : { callerSessionId }),
+        senderLabel: identity.label(),
         signal: exec.signal,
       })
     },

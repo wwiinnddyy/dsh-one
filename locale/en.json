@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Whale",
-    "description": "Session registry, delegated task runtime, source intake, and a read-only task panel whose name you can change in Settings."
+    "description": "A workspace assistant that keeps goals moving in the background, with a session registry, delegated tasks, source intake, and a control panel."
   }
 }

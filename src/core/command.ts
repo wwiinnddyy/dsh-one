@@ -6,6 +6,7 @@ import type { SettingsService } from './settings.js'
 import { OneCore, agentSessionId } from './registry.js'
 import { classifyError, parseModelRoute, splitFirstToken } from '../util.js'
 import { handleTask, handleTasks } from '../task/commands.js'
+import { handleRun, handleRuns } from '../run/commands.js'
 
 const USAGE = [
   'Usage:',
@@ -19,6 +20,9 @@ const USAGE = [
   '  /one tasks [limit]                       recent delegated tasks',
   '  /one task add <title> | <goal> [--cwd <path>] [--priority <n>] [--budget <n>]',
   '  /one task assign|show|retry|cancel|complete <taskId>',
+  '  /one run <goal> [--cwd <path>] [--deadline <min>] [--max-tasks <n>]',
+  '  /one runs [limit]                        recent background runs',
+  '  /one run show|pause|resume|cancel <runId> [reason]',
   '  /one help',
 ].join('\n')
 
@@ -34,8 +38,8 @@ export function registerOneCommand(
     // The command name stays `one` (documented API) and the copy stays
     // name-free: this string is evaluated once at registration, so embedding
     // the display name here would go stale the moment the user renames it.
-    description: 'Assistant name, sessions, cross-session sends, models, and delegated tasks',
-    input: { hint: 'name | sessions | send | model | status | audit | tasks | task | help' },
+    description: 'Assistant name, sessions, cross-session sends, models, delegated tasks, and background runs',
+    input: { hint: 'name | sessions | send | model | status | audit | tasks | task | run | runs | help' },
     async handler(invocation: CommandInvocationLike): Promise<CommandResultLike> {
       try {
         return await handle(invocation, core, ctx, settings)
@@ -77,6 +81,10 @@ async function handle(
       return handleTasks(rest, ctx)
     case 'task':
       return handleTask(rest, invocation, ctx)
+    case 'run':
+      return handleRun(rest, invocation, ctx)
+    case 'runs':
+      return handleRuns(rest, ctx)
     default:
       return { kind: 'error', text: `unknown /one action "${token}"\n${USAGE}` }
   }

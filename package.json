@@ -1,7 +1,7 @@
 {
   "name": "dsh-one",
   "version": "0.2.0",
-  "description": "DSH One: session registry, delegated task runtime, source intake, and a read-only panel for DeepSeek Harness.",
+  "description": "DSH One: a workspace assistant with durable background runs, a session registry, delegated tasks, source intake, and a control panel for DeepSeek Harness.",
   "license": "GPL-3.0",
   "type": "module",
   "icon": "icon.svg",
@@ -54,7 +54,8 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-slots"
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
   },

@@ -7,7 +7,7 @@ import { apply as applyIngress } from '../lib/ingress.js'
 export const TABLE_NAMES = [
   'sessions', 'outbox', 'audit', 'tasks', 'leases', 'reports', 'triggers', 'threads',
   'evals', 'decisions', 'policies', 'mandates', 'deliveries', 'cursors', 'subscriptions',
-  'settings',
+  'settings', 'runs', 'run_activities', 'run_wakes',
 ]
 
 export function makeTable(seed = []) {
@@ -191,7 +191,7 @@ export function makeConnection(rejection) {
   }
 }
 
-export function makeReq({ method = 'GET', headers = {}, body } = {}) {
+export function makeReq({ method = 'GET', headers = {}, body, url = '/' } = {}) {
   const listeners = new Map()
   let emitted = false
   const emit = () => {
@@ -208,7 +208,7 @@ export function makeReq({ method = 'GET', headers = {}, body } = {}) {
   return {
     method,
     headers,
-    url: '/',
+    url,
     on(event, listener) {
       const bucket = listeners.get(event) ?? []
       bucket.push(listener)
@@ -358,8 +358,10 @@ export async function createEnv(options = {}) {
     agents,
     permissionPresets,
     taskService: host.services.get('oneTasks'),
+    runService: host.services.get('oneRuns'),
     intake: host.services.get('oneIntake'),
     core: host.services.get('oneCore'),
+    settings: host.services.get('oneSettings'),
   }
 }
 

@@ -46,6 +46,13 @@ export const NOTIFY_MUTED_KEY = 'notifyMuted'
  */
 export const PERSONA_KEY = 'persona'
 
+/** Stop dispatch and wakeups for every run, without cancelling live workers. */
+export const RUNS_PAUSED_KEY = 'runsPaused'
+
+/** Local-minute quiet window, 0-1439. `from === to` disables it. */
+export const QUIET_FROM_KEY = 'quietFrom'
+export const QUIET_TO_KEY = 'quietTo'
+
 /** Longest accepted name, in Unicode code points. */
 export const DISPLAY_NAME_MAX_CHARS = 24
 
@@ -75,6 +82,14 @@ export interface SettingsService {
   notifyMuted(): boolean
   /** Set the mute switch. */
   setNotifyMuted(muted: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>
+  /** Whether every run is globally paused. */
+  runsPaused(): boolean
+  /** Pause or resume dispatch and wakeups for every run. */
+  setRunsPaused(paused: boolean, updatedBy?: SettingRecord['updatedBy']): Promise<void>
+  /** The local-minute quiet window; either end absent means disabled. */
+  quietHours(): { readonly from?: number; readonly to?: number }
+  /** Replace the quiet window; pass `undefined` for both to disable it. */
+  setQuietHours(from: number | undefined, to: number | undefined, updatedBy?: SettingRecord['updatedBy']): Promise<void>
   /** The user's own behaviour text, or `undefined` to use the built-in default. */
   persona(): string | undefined
   /** Replace the behaviour text after validating it. */
@@ -222,6 +237,54 @@ export class OneSettings implements SettingsService {
     this.emit()
   }
 
+  runsPaused(): boolean {
+    return this.store.getSetting(SETTINGS_NAMESPACE, RUNS_PAUSED_KEY)?.value === 'true'
+  }
+
+  async setRunsPaused(paused: boolean, updatedBy: SettingRecord['updatedBy'] = 'human'): Promise<void> {
+    await this.store.putSetting({
+      namespace: SETTINGS_NAMESPACE,
+      key: RUNS_PAUSED_KEY,
+      value: paused ? 'true' : 'false',
+      updatedAt: this.now(),
+      updatedBy,
+    })
+    this.emit()
+  }
+
+  quietHours(): { readonly from?: number; readonly to?: number } {
+    const from = this.readMinute(QUIET_FROM_KEY)
+    const to = this.readMinute(QUIET_TO_KEY)
+    return {
+      ...(from === undefined ? {} : { from }),
+      ...(to === undefined ? {} : { to }),
+    }
+  }
+
+  async setQuietHours(
+    from: number | undefined,
+    to: number | undefined,
+    updatedBy: SettingRecord['updatedBy'] = 'human',
+  ): Promise<void> {
+    const validatedFrom = validateMinute(from, 'from')
+    const validatedTo = validateMinute(to, 'to')
+    if ((validatedFrom === undefined) !== (validatedTo === undefined)) {
+      throw new OneErrorClass('one/quiet-hours', 'quiet hours need both ends, or neither', {})
+    }
+    if (validatedFrom === undefined || validatedTo === undefined) {
+      await this.store.deleteSetting(SETTINGS_NAMESPACE, QUIET_FROM_KEY)
+      await this.store.deleteSetting(SETTINGS_NAMESPACE, QUIET_TO_KEY)
+    } else {
+      await this.store.putSetting({
+        namespace: SETTINGS_NAMESPACE, key: QUIET_FROM_KEY, value: String(validatedFrom), updatedAt: this.now(), updatedBy,
+      })
+      await this.store.putSetting({
+        namespace: SETTINGS_NAMESPACE, key: QUIET_TO_KEY, value: String(validatedTo), updatedAt: this.now(), updatedBy,
+      })
+    }
+    this.emit()
+  }
+
   persona(): string | undefined {
     const record = this.store.getSetting(SETTINGS_NAMESPACE, PERSONA_KEY)
     const value = record?.value
@@ -279,6 +342,13 @@ export class OneSettings implements SettingsService {
     }
   }
 
+  private readMinute(key: string): number | undefined {
+    const value = this.store.getSetting(SETTINGS_NAMESPACE, key)?.value
+    if (value === undefined) return undefined
+    const parsed = Number.parseInt(value, 10)
+    return Number.isInteger(parsed) && parsed >= 0 && parsed < 1440 ? parsed : undefined
+  }
+
   private emit(): void {
     for (const listener of [...this.listeners]) {
       try {
@@ -288,6 +358,14 @@ export class OneSettings implements SettingsService {
       }
     }
   }
+}
+
+function validateMinute(value: number | undefined, label: string): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || value < 0 || value >= 1440) {
+    throw new OneErrorClass('one/quiet-hours', `quiet hours ${label} must be 0..1439`, { label, value })
+  }
+  return value
 }
 
 /** Acquire the service from a context that already mounted the core row. */

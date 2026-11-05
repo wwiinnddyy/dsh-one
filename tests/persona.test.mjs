@@ -9,9 +9,14 @@ test('the default persona says who the assistant is and how it reports', () => {
   assert.match(text, /## 怎么工作/u)
   assert.match(text, /## 什么时候开口/u)
   // The tools it is told to use must be the ones the delegate row registers.
-  assert.match(text, /one_assist/u)
+  assert.match(text, /one_run_start/u)
+  assert.match(text, /one_run_status/u)
+  assert.match(text, /one_run_control/u)
   assert.match(text, /one_workspaces/u)
   assert.match(text, /one_send/u)
+  // The fixed frame keeps async-run behaviour even when the body is rewritten.
+  assert.match(text, /## 后台推进/u)
+  assert.match(text, /不要在回合内同步等待/u)
 })
 
 test('the safety frame survives a user override', () => {

@@ -4,8 +4,9 @@ A single DeepSeek Harness (DSH) bundle plugin that adds:
 
 - a durable session registry and cross-session messaging;
 - a delegated task runtime with worker sessions, workspace leases, slots, reports, token budgets, recovery, and retry;
+- a durable background-run ledger (goal → steps → assistant wakeups) with async start, an in-chat status strip, a header badge, and a right-side panel grouped by workspace;
 - a source intake layer with trigger dedupe, a deterministic gate, rule assessment, policies, mandates, and idempotent acceptance;
-- a read-only Web panel and an optional DSH Go native panel.
+- a Web panel and an optional DSH Go native panel.
 
 The package is one npm package with internal modules. It mounts as three independent profile rows plus one browser half, so a missing optional host service can break at most its own row.
 
@@ -28,10 +29,10 @@ The plugin imports no DSH package at runtime. Host services are reached through 
 
 | Row | Package entry | Purpose | Default |
 |---|---|---|---|
-| `dsh-one` | `dsh-one` | registry, outbox, audit, `/one`, `one_sessions`/`one_send`/`one_model`, panel API | on |
-| `dsh-one-delegate` | `dsh-one/delegate` | task state machine, worker sessions, leases, slots, budgets, report tools | on, `taskMode: observe` |
+| `dsh-one` | `dsh-one` | registry, outbox, audit, `/one`, `one_sessions`/`one_send`/`one_model`/`one_session_create`, panel API | on |
+| `dsh-one-delegate` | `dsh-one/delegate` | task state machine, run ledger, watchdog, wake policy, worker sessions, leases, slots, budgets, report and run tools | on, `taskMode: observe` |
 | `dsh-one-ingress` | `dsh-one/ingress` | GitHub webhook/poll, trigger/thread/eval/policy/mandate | **disabled** |
-| client half | `dsh-one/client` | assistant entry above the workspace list plus its own Settings tab | web profiles only |
+| client half | `dsh-one/client` | assistant entry, in-chat run strip, header badge, right-side background panel, and its own Settings tab | web profiles only |
 
 Each row has its own `Config` and its own `inject` list. The profile row's `disabled` flag is the only enable switch; there is no second `enabled` key inside a row. Ingress is disabled because it has no safe default: repository, actor, mention, and secret must be configured first.
 
@@ -81,6 +82,9 @@ DSH_HOME=/tmp/dsh-one-smoke dsh --profile smoke --no-open
 /one task retry <taskId> [reason]
 /one task cancel <taskId> [reason]
 /one task complete <taskId>
+/one runs [limit]
+/one run <goal> [--cwd <path>] [--deadline <min>] [--max-tasks <n>]
+/one run show|pause|resume|cancel <runId> [reason]
 /one help
 ```
 
@@ -112,14 +116,17 @@ code points. An invalid name is rejected and the stored value is left alone.
 |---|---|
 | `one_sessions` | Read-only session list with workspace, state, trust, and model |
 | `one_workspaces` | Read-only Workspace map: sessions grouped by `cwd`, plus outstanding instructions |
-| `one_send` | Message another ordinary session; `requestId` is idempotent |
+| `one_send` | Message another ordinary session; `requestId` is idempotent; sends from the assistant carry a visible origin header |
 | `one_model` | Select another session's model with catalog fallback |
+| `one_session_create` | Create a new ordinary session in a workspace and deliver its first message; assistant-only |
 | `one_task_create` | Create a task; observed only when `taskMode: observe` |
 | `one_task_assign` | Start a queued task when a slot and lease are free |
 | `one_task_status` | Read one task or list recent tasks |
 | `one_task_report` | Structured worker report: `progress`, `waiting`, `ready`, `blocked`, `failed`, `dropped`; `reportId` is idempotent |
 | `one_task_control` | `complete`, `cancel`, `retry` |
-| `one_assist` | Bounded autonomous loop: plan → dispatch → poll → one verdict |
+| `one_run_start` | Create a durable goal and return immediately with a runId; the host advances it in the background |
+| `one_run_status` | Read one run or list recent runs, with the latest activity |
+| `one_run_control` | `pause`, `resume`, `cancel` one run |
 
 All tools declare standard JSON Schema parameters and output schemas (object-level `required` arrays), a cooperative `timeoutMs`, and a text `render`.
 
@@ -185,25 +192,123 @@ instructions already sent. Grouping is derived on every call from the Host's own
 session list, so it cannot drift; a session without a `cwd` is reported as
 "no workspace" rather than guessed into a bucket.
 
-### Bounded autonomous loop
+### Its visible identity
 
-`one_assist` takes one goal, plans it into tasks, dispatches them, polls until
-they are terminal, and reports one verdict:
+The assistant's conversation is still a normal DSH conversation — that is the
+point, not an accident. But it must be *recognizable*: a chat that looks
+exactly like every other chat gives no sign that this one can plan, delegate,
+and keep working after the turn ends.
+
+Two seats carry that, and both are scoped to the assistant's own Session:
+
+- **The composer dock** (`conversation.input.dock`) is always present in the
+  assistant conversation. When idle it reads `鲸宝 · 常驻助手 · 待命`; when a run
+  exists it turns into the progress strip (`后台推进中 · 2/5 · 3m`).
+- **The header chip** (`conversation.session.header.actions`) shows `助手` while
+  idle and the attention count (`需要你 1`) when a run needs a decision.
+
+Every other session renders neither. A profile without the right-sidebar services
+still gets both; the dock's `后台` button just has nowhere to open.
+
+### The origin tag
+
+A message from the assistant must be visibly distinguishable from one the user
+typed. It cannot ride on a structured field: `sessionController.prompt` is a
+strict schema with no sender, and a `user/message` event whose `source.kind` is
+not `user` renders as a `context` row — which the desktop's `ds-bot` plugin
+hides. So the origin travels as a text header inside the body:
 
 ```text
-completed | partial | blocked | failed | exhausted | cancelled
+[来自助手「鲸宝」]
+
+<the message>
 ```
 
-Three bounds stop a run: `maxTasks` (default 5), `maxRounds` (default 30), and
-`deadlineMs` (default 10 minutes). Any of them ends the run as `exhausted` with
-an explanation instead of hanging.
+- Only the assistant's own session is tagged. Another agent's `one_send`, the
+  human `/one send` command, and run wake-ups are delivered verbatim.
+- The header is applied to `deliveredText`; the outbox still stores the raw
+  `text`, so conflict detection, audit rows, and the panel read what the caller
+  actually wrote.
+- `senderLabel` is honored only for `source: 'assistant'`. A tool path that
+  passes one is ignored, so the tag cannot be forged.
+- Idempotency is by `requestId`: a retry returns the first outcome, including
+  the name that was current when the send was recorded.
+
+The tag is a label, not a security control. What actually bounds the assistant
+is `assertOperable` (trusted or allowed targets), the audit trail, and the modes.
+
+### Starting a session
+
+`one_session_create` lets the assistant open a new ordinary DSH session and
+speak first. It is gated twice: `allowSessionCreation` must be on, and the
+caller must be the assistant's own session — a worker cannot grow the session
+list. The order is fixed:
+
+```text
+create (controller.create with cwd)
+  -> trust (sessions row, audit session_created)
+  -> send  (first message, tagged with the origin header)
+```
+
+`idempotencyKey` makes the whole operation replay-safe: the key hashes to a
+deterministic request id, and an existing outbox row returns the session that
+was already created instead of making a second one. A host that picks a
+different session id is accepted — the outbox is the idempotency authority. A
+send that fails still returns the session id with `messageStatus: "failed"`, so
+the caller never loses a session it just made.
+
+`title` is this plugin's own label. `sessionController.create` has no title
+field and DSH derives the conversation title itself, so the new session appears
+in the sidebar under a host-generated name.
+
+### Async runs
+
+A run is one durable goal. The assistant calls `one_run_start`, which records
+the plan, creates one task per step, kicks off dispatch, and **returns at once**
+with a `runId`. This is the Super-agent async ReAct shape: the turn ends with
+"started", not with a loop that blocks on workers.
+
+```text
+one_run_start
+  -> runs row (goal, cwd, steps, bounds, deadline)
+  -> one TaskRuntime task per step
+  -> dispatch without awaiting the worker prompt
+  -> return { runId, status: "started" }
+```
+
+The host, not the model turn, advances the run:
+
+- a 15 s watchdog re-projects step states from the task ledger, enforces the
+  deadline, and re-dispatches queued steps;
+- task transitions are filtered in two levels — a deterministic transition
+  filter (terminal or attention states only, deduped, coalesced for 1.5 s), then
+  the `done` / `needs-you` / `failed` speaking policy;
+- a decision that survives the filter is delivered as a wake to the assistant's
+  own DSH session through the outbox, with a deterministic request id, so a
+  restart cannot deliver the same wake twice;
+- everything else (progress, retries, waiting) is written to the activity feed;
+  the assistant stays quiet.
 
 Completion is judged from **task states**, never from a self-assessment, so a
-model claiming success cannot turn a failed task into a success.
+model claiming success cannot turn a failed task into a success. A run ends as
+`done`, `failed`, `cancelled`, `exhausted` (deadline), and can be paused or
+resumed at any point. Bounds are `runMaxTasks` (default 5), `runDeadlineMs`
+(default 30 minutes), the per-task token budget, and `maxWorkers`.
+
+Runs started from the assistant session execute by default
+(`assistantRunMode: execute`) because the user is the one talking to it. Other
+agent sessions still respect `taskMode: observe`; `/one run` is always the human
+path. Set `assistantRunMode: observe` to record plans without dispatching.
+
+The Web client shows the same ledger in three places: a status strip above the
+assistant composer, a header badge that opens a right-side panel, and the panel
+itself, grouped by canonical workspace `cwd`. The panel is read/control only; it
+is not a second chat, and closing it does not stop the background work.
 
 ### When it speaks
 
-The policy lives in `src/task/notify.ts` and admits exactly three reasons to
+The policy lives in `src/run/filter.ts` (which transitions are candidates) and
+`src/task/notify.ts` (mute and quiet hours), and admits exactly three reasons to
 interrupt:
 
 | Reason | Raised when |
@@ -236,6 +341,7 @@ Each assignment creates one ordinary DSH session (not a subagent) through `sessi
 - `agent.ctx.tools.restrict` applies `workerToolAllow` or `workerToolDeny`.
 - The plugin registers the worker session as trusted, so the default session allowlist keeps working.
 - The dispatch prompt uses a deterministic request id `one:<taskId>:<inputId>`. DSH persists that id on the accepted user message and dedupes a repeated prompt across restart, which gives idempotent delivery without a new message id.
+- A task the assistant ordered carries its origin header on every prompt it sends. The label is frozen on the task row at creation (`assistantLabel`), so a retry after the assistant is renamed still says the name the work was ordered under. A human task, another agent's task, and a source-intake task keep the plain prompt.
 
 ### Leases
 
@@ -340,16 +446,15 @@ The webhook route is registered through `ctx.webServer.register` at `webhookPath
 
 ### Web
 
-`/one/api/overview`, `/one/api/tasks`, and `/one/api/decisions` are read-only and call the module read services; they never open `storageDomain` themselves. `/one/api/settings` is the one settings write endpoint: `GET` reads the name, the behaviour text, and their defaults; `PUT` with `displayName` persists a name, `PUT` with `persona` persists an edited behaviour text, `PUT` with `resetPersona: true` restores the built-in text, and `DELETE` restores the row default name. It sits behind the same `connection.requestRejection` fence as the read routes, because it writes user state. The overview order is:
+`/one/api/overview`, `/one/api/tasks`, and `/one/api/decisions` are read-only and call the module read services; they never open `storageDomain` themselves. The run surface adds `GET /one/api/runs` (assistant identity, cwd-grouped runs, totals), `GET /one/api/run?id=` (one run plus its activity tail), `POST /one/api/runs` (create a human run), `POST /one/api/run/control` (pause/resume/cancel), and `GET /one/api/activity?after=` (activity cursor). Every route sits behind `connection.requestRejection`.
 
-1. attention (needs a person);
-2. running;
-3. history;
-4. health.
+`/one/api/settings` is the settings write endpoint: `GET` reads the name, persona, session, home, `notifyMuted`, `runsPaused`, quiet hours, and the effective `assistantRunMode`; `PUT` accepts `displayName`, `persona`, `resetPersona: true`, `notifyMuted`, `runsPaused`, `quietFrom` + `quietTo` (minutes 0-1439, or both `null`), or `reset`; `DELETE` restores the row default name.
+
+The client polls `/one/api/runs` every 5 seconds only while a run surface is mounted and the page is visible. SSE remains a documented future option; the raw Web route can already hold a stream open.
 
 `/one/api/assistant` backs the assistant entry. `GET` reports the stored session id without creating anything, `POST` resolves the assistant's session and creates it on first use, and `DELETE` forgets it so the next open starts a fresh conversation. A stored id the host no longer lists is replaced rather than returned, because opening a dropped id would render an empty conversation instead of failing visibly. It is fenced like the write routes.
 
-The client half registers two seats and draws no chat surface of its own:
+The client half is chat-first and draws no chat surface of its own:
 
 - `sidebar.panellist` — the assistant entry, ordered `-100` so it sorts above the
   shipped Plugins and Schedules icons, i.e. above the workspace list. DSH owns the
@@ -359,6 +464,19 @@ The client half registers two seats and draws no chat surface of its own:
   which navigates to the ordinary conversation and clears the panel selection.
   The panel body is therefore only the momentary "opening" state; the user lands
   on a normal DSH chat whose conversation DSH renders itself.
+- `conversation.input.dock` (id `dsh-one-runs`) — the in-chat status strip above
+  the composer, rendered only when the current session is the assistant. It shows
+  one line (quiet/running/needs-you/paused), a pause control, and an expandable
+  step list; `needs-you` uses an assertive live region.
+- `conversation.session.header.actions` — a small “后台” / “需要你” badge. It
+  carries the count even when no right-sidebar service is present; the click
+  opens the right panel when that service is available.
+- a right-sidebar tab (kind `dsh-one-runs`, body key `dsh-one-runs`) — the
+  read/control “后台” panel grouped by workspace `cwd`, with per-run pause,
+  resume, cancel, step dots, and an activity tail. It is not a second chat, and
+  closing it does not stop the background work. The tab type registers on the
+  first successful poll (or the first badge click), because the right-sidebar
+  plugin may apply after this one.
 - `settings.section` (id `dsh-one`) — the plugin's own Settings tab, which owns
   its label, unlike a `settings.general.item` row whose label is unused.
 
@@ -373,7 +491,9 @@ The package declares one panel (`Tasks`, ≤16 characters) and one composer stri
 ## Security posture
 
 - `mode: observe` for agent session tools by default.
-- `taskMode: observe` for agent task tools by default; `/one task` is the human path.
+- `taskMode: observe` for agent task tools by default; `/one task` and `/one run` are human paths.
+- `assistantRunMode: execute` treats the assistant session as the user's proxy, so a goal the user states in chat actually dispatches workers. Every other agent session keeps `taskMode`. Set `assistantRunMode: observe` to record plans only. Runs are audited and their workspaces are checked against `allowedWorkspaceRoots`.
+- Wakes are host-originated, delivered through the outbox with deterministic request ids, and never retried when the outcome is unknown. Mute and quiet hours suppress `done` but never `needs-you` or `failed`.
 - Session allowlist is closed by default; plugin-created worker sessions are registered as trusted explicitly.
 - Workspace roots are checked for agent-initiated operations and task creation; cross-workspace access is audited and denied by default.
 - Ingress is disabled; empty repository/actor lists reject everything; bots are ignored; mention is required.
@@ -388,7 +508,8 @@ defineDomain({
   version: 2,
   compatibleVersions: [1],
   tables: { sessions, outbox, audit, tasks, leases, reports, triggers, threads, evals,
-            decisions, policies, mandates, deliveries, cursors, subscriptions, settings },
+            decisions, policies, mandates, deliveries, cursors, subscriptions, settings,
+            runs, run_activities, run_wakes },
 })
 ```
 
@@ -403,6 +524,7 @@ The domain identifier must match DSH's `UNIT_NAME_RE` (`/^[a-z][a-z0-9_]*$/`), w
 | Key | Default | Meaning |
 |---|---|---|
 | `mode` | `observe` | Agent session tools record only; `active` delivers and applies |
+| `assistantSendMode` | `active` | The assistant is the user's proxy: `active` delivers its sends even while `mode` is `observe`; `observe` records them too |
 | `assistantHomeRoot` | `""` | Root for the assistant's own directory; empty derives `<DSH home>` |
 | `allowAllSessions` | `false` | Operate any non-subagent session |
 | `allowedSessionIds` | `[]` | Explicit trusted targets |
@@ -421,6 +543,7 @@ The domain identifier must match DSH's `UNIT_NAME_RE` (`/^[a-z][a-z0-9_]*$/`), w
 | Key | Default | Meaning |
 |---|---|---|
 | `taskMode` | `observe` | Agent task tools record only |
+| `assistantRunMode` | `execute` | Runs started from the assistant session execute; `observe` records plans only |
 | `maxWorkers` | `4` | Base concurrent slots; humans add one |
 | `workspaceMode` | `lease` | One writer per canonical workspace |
 | `leaseTtlMs` | `120000` | Lease lifetime renewed by heartbeat |
@@ -434,6 +557,10 @@ The domain identifier must match DSH's `UNIT_NAME_RE` (`/^[a-z][a-z0-9_]*$/`), w
 | `reportMaxChars` | `4000` | Truncation limit per report field |
 | `commandTimeoutMs` | `60000` | Worker creation/prompt deadline |
 | `defaultTaskPriority` | `100` | Default ordering priority |
+| `runMaxTasks` | `5` | Maximum steps one run may create (1-20) |
+| `runDeadlineMs` | `1800000` | Default run budget; expired runs cancel unfinished steps |
+| `wakeCoalesceMs` | `1500` | Window that merges task transitions into one wake decision |
+| `watchdogTickMs` | `15000` | Host period for run projection, deadlines, and wake delivery |
 
 ### Ingress row
 
@@ -477,6 +604,14 @@ The suite is offline and uses a fake Cordis context, fake session controller, fa
 - policy change and mandate revalidation;
 - webhook HMAC and delivery dedupe;
 - panel authentication and degraded reads;
+- async run start returning before a worker prompt settles;
+- progress staying quiet while `needs-you`, `done`, and `failed` each wake once;
+- pause, mute, and quiet-hours suppression with the recorded reason;
+- deadline cancellation and `exhausted`;
+- restart reattachment without resending a settled wake;
+- assistant-origin execution vs. observe-only agent sessions;
+- run API grouping, control, validation, and degradation;
+- client dock, badge, and right-panel registration and fallback;
 - package/version/row/client manifest invariants.
 
 `npm run build` cleans `lib/` and regenerates every runtime and declaration artifact. Commit the rebuilt `lib/` with `src/`.
@@ -507,6 +642,11 @@ Task dispatch and intake acceptance were exercised only with fakes. A real model
 - **At-least-once, never exactly-once.** Webhook delivery dedupe, deterministic ids, and startup reconciliation reduce duplicates; they cannot make an external side effect transactional with the local store.
 - **Assessment quality depends on the configured model.** Deterministic `denyPattern` rules are a safe fallback, not a semantic classifier.
 - **Polling covers issue comments only.** It is a backstop for missed webhooks, not a full event mirror.
-- **The assistant needs the Web shell's sidebar and settings slots.** A profile without `dsh-client-ui-sidebar` / `dsh-client-ui-layout` loads the host half but draws neither the entry nor the tab.
+- **The assistant needs the Web shell's sidebar and settings slots.** A profile without `dsh-client-ui-sidebar` / `dsh-client-ui-layout` loads the host half but draws neither the entry nor the tab. The in-chat strip needs `conversation.input.dock`; the header badge and right panel additionally need the right-sidebar services, and degrade to the strip when those are absent.
+- **No proactive idle and no IM yet.** A run advances only after the user states a goal; the assistant does not look for work on its own. The channel seam (`src/channel/`) is outbound-only and the QQ adapter is deferred.
+- **Polling, not SSE.** The Web surfaces poll the run summary every 5 seconds while visible. A profile with many runs pays that small cost continuously; SSE is the next step if it matters.
 - **The webhook route is authenticated by HMAC by default.** `requireHostAuth` is for deployments behind a proxy that adds the host credential; GitHub itself cannot.
 - **Worker tool restriction can be partial.** `tools.restrict` rejects a whole list when one name belongs to the worker's own scope; the runtime retries individual denies and records a partial result.
+- **The origin tag is a label, not a signature.** `[来自助手「名字」]` is plain text inside the message body. A profile that replaces the chat node (the desktop's `ds-bot` hides `context` rows) still shows it, but nothing verifies it and a human could type it by hand. The real controls are `assertOperable`, the audit trail, and the modes.
+- **A new session's title is host-generated.** `one_session_create` accepts `title`, but `sessionController.create` has no title field, so the label lives only in this plugin's registry; the sidebar shows the name DSH derived. A rename tool would be a separate feature.
+- **Renaming the assistant does not rewrite history.** Sends already recorded keep the name they were delivered under, and a retried `requestId` returns the first outcome. That is deliberate: a tag that changed after the fact would be a worse lie.

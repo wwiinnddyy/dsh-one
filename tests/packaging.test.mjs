@@ -32,6 +32,24 @@ test('the bundle patch mounts three rows and leaves ingress disabled', () => {
   assert.notEqual(disabledIndex, -1)
 })
 
+test('the client inject list names only packages this DSH release ships', () => {
+  // `@deepseek-ai/dsh-client-ui-slots` is absent from rc.5; listing it made the
+  // manifest advertise a dependency the host can never resolve.
+  assert.equal(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-slots'), false)
+  assert.deepEqual(pkg.dsh.client.inject, [
+    '@deepseek-ai/dsh-client-ui-layout',
+    '@deepseek-ai/dsh-client-ui-sidebar-right',
+    '@deepseek-ai/dsh-client-ui-conversation',
+  ])
+})
+
+test('the patch keeps agents observed while the assistant still speaks', () => {
+  // `mode: observe` is the conservative default for agent tools; the assistant
+  // is the user's proxy and must still be able to deliver.
+  assert.match(patch, /mode: observe\n/u)
+  assert.match(patch, /assistantSendMode: active\n/u)
+})
+
 test('DSH Go manifest respects panel and strip limits', () => {
   const panel = pkg.dshGo.contributes.panels[0]
   const title = typeof panel.title === 'string' ? panel.title : panel.title.en

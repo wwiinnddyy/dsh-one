@@ -9,6 +9,10 @@
       config:
         # Agent-initiated session tools record without delivering.
         mode: observe
+        # The assistant is the user's proxy, so its own sends still deliver while
+        # mode is observe. Other agents stay recorded-only. Set observe to record
+        # the assistant's sends too (a dry-run profile).
+        assistantSendMode: active
         allowAllSessions: false
         allowedSessionIds: []
         allowedWorkspaceRoots: []
@@ -27,6 +31,9 @@
         # Agent task tools record intended work without creating tasks.
         # /one task add is the human path and is not gated by this mode.
         taskMode: observe
+        # Runs started from the assistant session (the user's proxy) execute.
+        # Set to observe to record a plan without dispatching worker sessions.
+        assistantRunMode: execute
         maxWorkers: 4
         workspaceMode: lease
         leaseTtlMs: 120000
@@ -45,6 +52,10 @@
         reportMaxChars: 4000
         commandTimeoutMs: 60000
         defaultTaskPriority: 100
+        runMaxTasks: 5
+        runDeadlineMs: 1800000
+        wakeCoalesceMs: 1500
+        watchdogTickMs: 15000
 
     # No safe default: enable only after setting a webhook secret env var,
     # allowed repositories, allowed actors, a mention login, and a workspace.

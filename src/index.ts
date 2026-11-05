@@ -28,6 +28,8 @@ export const Config: z<OneConfig> = z.object({
     .description('Directory the assistant owns; "super-mind" is created inside it. A Session without a cwd cannot be opened without a Workspace prompt, so this must resolve to a real path.'),
   mode: z.union([z.const('observe'), z.const('active')]).default('observe')
     .description('Agent-initiated session tools: observe records only; active delivers and applies.'),
+  assistantSendMode: z.union([z.const('observe'), z.const('active')]).default('active')
+    .description('The assistant session is the user\'s proxy: active delivers its sends even while mode is observe. Set observe to record them too.'),
   allowAllSessions: z.boolean().default(false)
     .description('Allow every non-subagent session. Keep false on shared hosts.'),
   allowedSessionIds: z.array(String).default([])
@@ -69,7 +71,10 @@ export async function apply(ctx: DshContextLike, config: OneConfig): Promise<voi
   const provide = ctx.provide?.('oneCore', core)
   const provideSettings = ctx.provide?.('oneSettings', settings)
   ctx.effect(() => {
-    const disposeTools = registerOneTools(ctx, core, resolved)
+    const disposeTools = registerOneTools(ctx, core, resolved, {
+      assistantSessionId: () => settings.assistantSessionId(),
+      assistantName: () => settings.displayName(),
+    })
     const disposeCommand = registerOneCommand(ctx, core, resolved, settings)
     const disposeApi = resolved.panelEnabled
       ? registerPanelApi(ctx, core, settings)
