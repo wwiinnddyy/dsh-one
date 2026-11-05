@@ -11,6 +11,7 @@ import { createRuntime, type OneRuntime } from './app/runtime.js'
 import { registerOneTools } from './app/tools.js'
 import { registerOneCommand } from './app/commands.js'
 import { registerAssistantPersona } from './app/identity.js'
+import { registerPanelApi } from './app/http.js'
 
 /** Cordis plugin name. */
 export const name = 'dsh-one'
@@ -53,9 +54,11 @@ export async function apply(ctx: DshContextLike, config: OneConfig): Promise<voi
   ctx.effect(() => {
     const disposeTools = registerOneTools(ctx, runtime)
     const disposeCommand = registerOneCommand(ctx, runtime)
+    const disposeApi = registerPanelApi(ctx, runtime)
     const disposePersona = registerAssistantPersona(ctx, runtime)
     return (): void => {
       disposePersona()
+      disposeApi()
       disposeCommand()
       disposeTools()
       offEvent?.()

@@ -86,7 +86,54 @@ export function makeWorkspaceRegistry() {
   }
 }
 
-export function makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt } = {}) {
+export function makeWebServer() {
+  const routes = new Map()
+  return {
+    routes,
+    register(route) { routes.set(route.path, route.handler); return () => routes.delete(route.path) },
+  }
+}
+
+export function makeConnection(rejection) {
+  return { requestRejection() { return rejection } }
+}
+
+export function makeReq({ method = 'GET', url = '/', headers = {}, body } = {}) {
+  const listeners = new Map()
+  let emitted = false
+  const emit = () => {
+    if (emitted) return
+    emitted = true
+    const chunks = body === undefined ? [] : [Buffer.from(body)]
+    queueMicrotask(() => {
+      for (const chunk of chunks) for (const listener of listeners.get('data') ?? []) listener(chunk)
+      for (const listener of listeners.get('end') ?? []) listener()
+    })
+  }
+  return {
+    method, url, headers,
+    on(event, listener) {
+      const bucket = listeners.get(event) ?? []
+      bucket.push(listener)
+      listeners.set(event, bucket)
+      if (event === 'end') emit()
+      return this
+    },
+    resume() {},
+    destroy() {},
+  }
+}
+
+export function makeResponse() {
+  return {
+    status: undefined, headers: undefined, body: undefined, headersSent: false,
+    writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; return this },
+    end(body) { this.body = body; this.headersSent = true; return this },
+    json() { return this.body === undefined ? undefined : JSON.parse(this.body) },
+  }
+}
+
+export function makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt, webServer, connection } = {}) {
   const tools = new Map()
   const commands = new Map()
   const services = new Map()
@@ -103,6 +150,8 @@ export function makeCtx({ controller, storageDomain, workspaceRegistry, systemPr
       if (name === 'storageDomain') return storageDomain
       if (name === 'workspaceRegistry') return workspaceRegistry
       if (name === 'systemPrompt') return systemPrompt
+      if (name === 'webServer') return webServer
+      if (name === 'connection') return connection
       return undefined
     },
     provide(name, value) {
@@ -147,13 +196,17 @@ export async function createEnv(options = {}) {
   const storageDomain = options.storageDomain ?? makeStorageDomain(options.seed)
   const workspaceRegistry = options.workspaceRegistry ?? makeWorkspaceRegistry()
   const systemPrompt = options.systemPrompt
-  const host = makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt })
+  const webServer = options.webServer ?? makeWebServer()
+  const connection = options.connection ?? makeConnection(undefined)
+  const host = makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt, webServer, connection })
   await apply(host.ctx, options.config ?? {})
   return {
     ...host,
     controller,
     storageDomain,
     workspaceRegistry,
+    webServer,
+    connection,
     runtime: host.services.get('oneEngine').runtime,
   }
 }

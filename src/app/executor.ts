@@ -129,6 +129,8 @@ export class Executor {
       kind: 'blocked',
       summary: 'turn-ended-without-report',
       detail: 'The worker turn ended without a one_work report; nothing is assumed done.',
+    }).then(async () => {
+      await this.enqueueRelay(`[工单 ${ticket.ticketId}] 执行会话结束了回合但没有报告，已标记受阻。`)
     })
   }
 

@@ -80,6 +80,36 @@ export interface CommandDefinitionLike {
   handler(invocation: CommandInvocationLike): CommandResultLike | Promise<CommandResultLike>
 }
 
+/** Minimal HTTP request/response surface used by `ctx.webServer`. */
+export interface HttpRequestLike {
+  readonly method?: string
+  readonly url?: string
+  readonly headers: Record<string, string | string[] | undefined>
+  on(event: string, listener: (...args: unknown[]) => void): unknown
+  resume?(): void
+  destroy?(): void
+}
+
+export interface HttpResponseLike {
+  writeHead(status: number, headers?: Record<string, string>): unknown
+  end(body?: string): unknown
+  readonly headersSent?: boolean
+}
+
+export interface WebRouteLike {
+  readonly kind: 'exact' | 'prefix'
+  readonly path: string
+  readonly handler: (req: HttpRequestLike, res: HttpResponseLike) => void | Promise<void>
+}
+
+export interface WebServerLike {
+  register(route: WebRouteLike): () => void
+}
+
+export interface ConnectionLike {
+  requestRejection(request: { readonly headers: Record<string, string | string[] | undefined> }): 401 | 403 | undefined
+}
+
 /** Cordis context subset used by this plugin. */
 export interface DshContextLike {
   effect(callback: () => (() => void) | void, label?: string): unknown

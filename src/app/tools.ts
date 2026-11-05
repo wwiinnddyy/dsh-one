@@ -270,6 +270,11 @@ function workTool(runtime: OneRuntime): ToolDefinitionLike {
             ...(asString(record['detail']) === undefined ? {} : { detail: asString(record['detail']) as string }),
             ...(asString(record['evidence']) === undefined ? {} : { evidence: asString(record['evidence']) as string }),
           })
+          // The Router is only woken by states a person can act on.
+          if (kind === 'ready' || kind === 'blocked' || kind === 'failed' || kind === 'dropped') {
+            await runtime.executor.enqueueRelay(`[工单 ${ticketId}] ${kind}: ${summary}`)
+            runtime.executor.schedule()
+          }
           return toJson(reported)
         }
         case 'answer': {

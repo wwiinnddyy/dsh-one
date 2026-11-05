@@ -23,14 +23,21 @@ test('the bundle patch mounts one core row in observe mode', () => {
   assert.doesNotMatch(patch, /dsh-one-ingress/u)
 })
 
-test('the build produced the host entry and its types', () => {
+test('the build produced the host entry, the client bundle and types', () => {
   assert.equal(existsSync(new URL('../lib/index.js', import.meta.url)), true)
   assert.equal(existsSync(new URL('../lib/types/index.d.ts', import.meta.url)), true)
   assert.equal(existsSync(new URL('../lib/core/engine.js', import.meta.url)), true)
+  assert.equal(existsSync(new URL('../lib/client.js', import.meta.url)), true)
+  assert.equal(existsSync(new URL('../lib/types/client.d.ts', import.meta.url)), true)
 })
 
-test('no client-ui package is advertised before the client phase', () => {
-  assert.equal(pkg.dsh.client, undefined)
-  const source = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
-  assert.doesNotMatch(source, /dsh-client-ui-slots/u)
+test('the client manifest lists only packages this DSH release ships', () => {
+  assert.equal(pkg.exports['./client'].default, './lib/client.js')
+  assert.equal(pkg.dsh.client.platform, 'web')
+  assert.deepEqual(pkg.dsh.client.inject, [
+    '@deepseek-ai/dsh-client-ui-layout',
+    '@deepseek-ai/dsh-client-ui-sidebar-right',
+    '@deepseek-ai/dsh-client-ui-conversation',
+  ])
+  assert.equal(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-slots'), false)
 })
