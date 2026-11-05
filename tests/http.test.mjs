@@ -50,13 +50,14 @@ test('the assistant route creates a real session and reuses it', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-one-http-'))
   const env = await createEnv({ config: { assistantHomeRoot: root } })
   try {
-    const created = (await request(env, '/one/api/assistant', { method: 'POST' })).json()
+    // DSH may hand the handler a lowercase method; it must still route.
+    const created = (await request(env, '/one/api/assistant', { method: 'post' })).json()
     assert.equal(typeof created.sessionId, 'string')
     assert.equal(created.created, true)
     const again = (await request(env, '/one/api/assistant', { method: 'POST' })).json()
     assert.equal(again.created, false)
     assert.equal(again.sessionId, created.sessionId)
-    const read = (await request(env, '/one/api/assistant')).json()
+    const read = (await request(env, '/one/api/assistant', { method: 'get' })).json()
     assert.equal(read.sessionId, created.sessionId)
   } finally {
     await env.dispose()

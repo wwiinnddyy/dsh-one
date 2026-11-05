@@ -18,6 +18,10 @@ import { workspaceKey, workspaceLabel } from './paths.js'
 
 const MAX_BODY_BYTES = 1_000_000
 
+function methodOf(req: HttpRequestLike): string {
+  return (req.method ?? 'GET').toUpperCase()
+}
+
 export function registerPanelApi(ctx: DshContextLike, runtime: OneRuntime): () => void {
   const server = ctx.get('webServer') as WebServerLike | undefined
   if (server === undefined) return () => {}
@@ -110,7 +114,7 @@ function tickets(runtime: OneRuntime, res: HttpResponseLike): void {
 }
 
 async function stopTicket(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
-  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  if (methodOf(req) !== 'POST') return json(res, 405, { error: 'method not allowed' })
   const body = parseBody(await readBody(req))
   const ticketId = typeof body['ticketId'] === 'string' ? body['ticketId'] : undefined
   if (ticketId === undefined) return json(res, 400, { error: 'ticketId is required' })
@@ -137,8 +141,8 @@ function workspaces(runtime: OneRuntime, res: HttpResponseLike): void {
 }
 
 async function assistant(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
-  if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-  if (req.method === 'GET') {
+  if (methodOf(req) !== 'GET' && methodOf(req) !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  if (methodOf(req) === 'GET') {
     const sessionId = runtime.assistantSessionId()
     return json(res, 200, { sessionId: sessionId ?? null })
   }
@@ -151,8 +155,8 @@ async function assistant(runtime: OneRuntime, req: HttpRequestLike, res: HttpRes
 }
 
 async function settings(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
-  if (req.method === 'GET') return json(res, 200, settingsPayload(runtime))
-  if (req.method !== 'PUT') return json(res, 405, { error: 'method not allowed' })
+  if (methodOf(req) === 'GET') return json(res, 200, settingsPayload(runtime))
+  if (methodOf(req) !== 'PUT') return json(res, 405, { error: 'method not allowed' })
   const body = parseBody(await readBody(req))
   try {
     if (typeof body['displayName'] === 'string') await runtime.settings.setDisplayName(body['displayName'])
