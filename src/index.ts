@@ -9,12 +9,14 @@ import z from '@deepseek-ai/schemastery'
 import type { DshContextLike, OneConfig } from './types.js'
 import { createRuntime, type OneRuntime } from './app/runtime.js'
 import { registerOneTools } from './app/tools.js'
+import { registerOneCommand } from './app/commands.js'
+import { registerAssistantPersona } from './app/identity.js'
 
 /** Cordis plugin name. */
 export const name = 'dsh-one'
 
 /** Required services. */
-export const inject = ['tools']
+export const inject = ['tools', 'commands']
 
 /** Core row configuration. */
 export const Config: z<OneConfig> = z.object({
@@ -50,7 +52,11 @@ export async function apply(ctx: DshContextLike, config: OneConfig): Promise<voi
 
   ctx.effect(() => {
     const disposeTools = registerOneTools(ctx, runtime)
+    const disposeCommand = registerOneCommand(ctx, runtime)
+    const disposePersona = registerAssistantPersona(ctx, runtime)
     return (): void => {
+      disposePersona()
+      disposeCommand()
       disposeTools()
       offEvent?.()
       provide?.()

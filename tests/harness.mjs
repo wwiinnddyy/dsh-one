@@ -86,7 +86,7 @@ export function makeWorkspaceRegistry() {
   }
 }
 
-export function makeCtx({ controller, storageDomain, workspaceRegistry } = {}) {
+export function makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt } = {}) {
   const tools = new Map()
   const commands = new Map()
   const services = new Map()
@@ -102,6 +102,7 @@ export function makeCtx({ controller, storageDomain, workspaceRegistry } = {}) {
       if (name === 'sessionController') return controller
       if (name === 'storageDomain') return storageDomain
       if (name === 'workspaceRegistry') return workspaceRegistry
+      if (name === 'systemPrompt') return systemPrompt
       return undefined
     },
     provide(name, value) {
@@ -145,7 +146,8 @@ export async function createEnv(options = {}) {
   const controller = options.controller ?? makeController({ sessions: options.sessions ?? [] })
   const storageDomain = options.storageDomain ?? makeStorageDomain(options.seed)
   const workspaceRegistry = options.workspaceRegistry ?? makeWorkspaceRegistry()
-  const host = makeCtx({ controller, storageDomain, workspaceRegistry })
+  const systemPrompt = options.systemPrompt
+  const host = makeCtx({ controller, storageDomain, workspaceRegistry, systemPrompt })
   await apply(host.ctx, options.config ?? {})
   return {
     ...host,

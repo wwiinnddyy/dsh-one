@@ -63,6 +63,23 @@ export interface WorkspaceRegistryLike {
   create(path: string, name: string): Promise<{ readonly id: string }>
 }
 
+export interface CommandInvocationLike {
+  readonly agent: AgentLike
+  readonly rawInput: string
+  readonly signal?: AbortSignal
+}
+
+export type CommandResultLike =
+  | { readonly kind: 'success'; readonly text?: string }
+  | { readonly kind: 'error'; readonly text: string }
+
+export interface CommandDefinitionLike {
+  readonly name: string
+  readonly description: string
+  readonly input?: { readonly hint?: string }
+  handler(invocation: CommandInvocationLike): CommandResultLike | Promise<CommandResultLike>
+}
+
 /** Cordis context subset used by this plugin. */
 export interface DshContextLike {
   effect(callback: () => (() => void) | void, label?: string): unknown
@@ -71,6 +88,7 @@ export interface DshContextLike {
   on?(event: string, listener: (...args: any[]) => unknown): () => void
   inject?(names: string[], callback: (ctx: DshContextLike) => void): unknown
   readonly tools: { register(definition: ToolDefinitionLike): () => void }
+  readonly commands?: { register(definition: CommandDefinitionLike): () => void }
 }
 
 export type OneMode = 'observe' | 'active'
