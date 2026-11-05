@@ -31,6 +31,38 @@ export interface ToolDefinitionLike {
   execute(args: unknown, exec: ToolRunContextLike): Promise<unknown>
 }
 
+/** One row returned by `session/list`. */
+export interface SessionSummary {
+  readonly sessionId: string
+  readonly updatedAt: number
+  readonly running: boolean
+  readonly blank: boolean
+  readonly agentAvailable: boolean
+  readonly parentSessionId?: string
+  readonly origin?: 'subagent'
+  readonly cwd?: string
+}
+
+/** Host session controller: the implementation behind the `session/*` namespace. */
+export interface SessionControllerLike {
+  list(request: Record<string, never>, signal: AbortSignal): Promise<{ readonly items: readonly SessionSummary[] }>
+  create(request: { readonly cwd?: string; readonly sessionId?: string; readonly agentPreset?: string; readonly workspaceId?: string }): Promise<{ readonly sessionId: string; readonly agentPreset?: string }>
+  prompt(request: {
+    readonly requestId: string
+    readonly sessionId: string
+    readonly mode: 'queue' | 'steer'
+    readonly content: readonly { readonly type: 'text'; readonly text: string }[]
+    readonly clientTimeZone?: string
+  }, signal: AbortSignal): Promise<unknown>
+  cancel?(request: { readonly sessionId: string }): { readonly accepted: true }
+}
+
+/** Host workspace registry. */
+export interface WorkspaceRegistryLike {
+  resolveByPath(path: string): Promise<{ readonly id: string } | undefined>
+  create(path: string, name: string): Promise<{ readonly id: string }>
+}
+
 /** Cordis context subset used by this plugin. */
 export interface DshContextLike {
   effect(callback: () => (() => void) | void, label?: string): unknown
@@ -55,4 +87,6 @@ export interface OneConfig {
   readonly allowedWorkspaceRoots: readonly string[]
   /** Concurrent worker assignments. */
   readonly maxWorkers: number
+  /** Deadline for one session operation. */
+  readonly commandTimeoutMs: number
 }

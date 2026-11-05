@@ -85,6 +85,8 @@ export const ticketSchema = z.object({
   attention: attentionSchema.optional(),
   delivery: deliverySchema.optional(),
   goalId: z.string().optional(),
+  origin: z.enum(['assistant', 'human', 'agent']).optional(),
+  assistantLabel: z.string().optional(),
   createdBy: z.string().optional(),
   createdAt: nonNegative,
   updatedAt: nonNegative,

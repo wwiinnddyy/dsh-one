@@ -31,6 +31,16 @@ export interface EffectStore {
   putEffect(record: EffectRecord): Promise<void>
 }
 
+/** A handler that cannot run yet; it is retried without counting a failure. */
+export class Later extends Error {
+  readonly delayMs: number
+  constructor(message: string, delayMs = 2_000) {
+    super(message)
+    this.name = 'Later'
+    this.delayMs = delayMs
+  }
+}
+
 export type EffectHandler = (payload: unknown, record: EffectRecord) => void | Promise<void>
 
 export interface EffectsOptions {
@@ -123,6 +133,17 @@ export class EffectsQueue {
         await handler(record.payload, running)
         await this.store.putEffect({ ...running, status: 'done', updatedAt: this.now() })
       } catch (error: unknown) {
+        if (error instanceof Later) {
+          await this.store.putEffect({
+            ...running,
+            status: 'pending',
+            attempts: Math.max(0, running.attempts - 1),
+            dueAt: this.now() + error.delayMs,
+            error: error.message,
+            updatedAt: this.now(),
+          })
+          continue
+        }
         failed += 1
         const message = error instanceof Error ? error.message : String(error)
         if (running.attempts >= this.maxAttempts) {

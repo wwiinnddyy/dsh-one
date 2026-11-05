@@ -85,6 +85,10 @@ export interface Ticket {
   readonly delivery?: DeliveryFailure
   /** The Goal this Ticket belongs to, when it was planned as part of one. */
   readonly goalId?: string
+  /** Who asked for the work. */
+  readonly origin?: 'assistant' | 'human' | 'agent'
+  /** Frozen origin header for prompts created by the assistant. */
+  readonly assistantLabel?: string
   readonly createdBy?: string
   readonly createdAt: number
   readonly updatedAt: number

@@ -30,6 +30,8 @@ export interface CreateTicketInput {
   readonly goal: string
   readonly cwd?: string
   readonly goalId?: string
+  readonly origin?: 'assistant' | 'human' | 'agent'
+  readonly assistantLabel?: string
   readonly createdBy?: string
   /** Deterministic id for idempotent creation. */
   readonly ticketId?: string
@@ -133,6 +135,8 @@ export class Engine {
       status: 'open',
       assignments: [],
       ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
+      ...(input.assistantLabel === undefined ? {} : { assistantLabel: input.assistantLabel }),
       ...(input.createdBy === undefined ? {} : { createdBy: input.createdBy }),
       createdAt: at,
       updatedAt: at,
@@ -254,6 +258,47 @@ export class Engine {
     this.assertOpen(ticket)
     const at = this.now()
     return await this.end(ticket, 'cancelled', input.reason ?? 'stopped', at)
+  }
+
+  /**
+   * Record an infrastructure-level ending of an Assignment, such as a turn that
+   * ended without a report or a host restart. It is a Report so the Ticket shows
+   * a person stage instead of silently looking busy.
+   */
+  async interrupt(input: {
+    readonly ticketId: string
+    readonly assignmentId: string
+    readonly kind: 'blocked' | 'failed'
+    readonly summary: string
+    readonly detail?: string
+  }): Promise<Ticket> {
+    const ticket = this.requireTicket(input.ticketId)
+    this.assertOpen(ticket)
+    const assignment = ticket.assignments.find(item => item.assignmentId === input.assignmentId)
+    if (assignment === undefined) {
+      throw new UserError('one/assignment-not-found', 'this ticket has no such assignment', {
+        ticketId: ticket.ticketId,
+        assignmentId: input.assignmentId,
+      })
+    }
+    if (assignment.status !== 'running') return ticket
+    const at = this.now()
+    const report: Report = {
+      reportId: newId('report'),
+      assignmentId: assignment.assignmentId,
+      sessionId: assignment.sessionId,
+      kind: input.kind,
+      summary: input.summary,
+      ...(input.detail === undefined ? {} : { detail: input.detail }),
+      at,
+    }
+    return await this.write({
+      ...ticket,
+      assignments: ticket.assignments.map(item =>
+        item.assignmentId === assignment.assignmentId ? endAssignment(item, at) : item),
+      latestReport: report,
+      updatedAt: at,
+    })
   }
 
   /** A tool or panel view: the stored Ticket plus its derived stage. */
