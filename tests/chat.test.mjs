@@ -160,13 +160,10 @@ test('the avatar route uploads and clears the avatar', async () => {
   }
 })
 
-test('a new conversation clears the transcript and reseeds the welcome line', async () => {
+test('the assistant keeps one long-lived conversation and exposes no clear route', async () => {
   const env = await createEnv()
   try {
-    await request(env, '/one/api/chat?send=hello')
-    assert.ok((await request(env, '/one/api/chat')).json().items.length > 1)
-    const cleared = await request(env, '/one/api/chat/clear', { method: 'POST', body: '{}' })
-    assert.equal(cleared.status, 200)
+    assert.equal(env.webServer.routes.get('/one/api/chat/clear'), undefined)
     const list = (await request(env, '/one/api/chat')).json()
     assert.equal(list.items.length, 1)
     assert.equal(list.items[0].role, 'assistant')

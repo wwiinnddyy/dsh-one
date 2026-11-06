@@ -17,6 +17,25 @@ interface ReactLike {
   useEffect(run: () => void | (() => void), deps?: readonly unknown[]): void
   useRef<T>(initial: T): { current: T }
 }
+interface MarkdownLabels {
+  readonly code: {
+    readonly copyLabel: string
+    readonly copiedLabel: string
+    readonly toolbarLabels: {
+      readonly codeLabel: string
+      readonly wrapLabel: string
+      readonly unwrapLabel: string
+    }
+  }
+  readonly footnotes: string
+}
+interface MarkdownTextProps {
+  readonly text: string
+  readonly streaming?: boolean
+  readonly labels: MarkdownLabels
+  readonly variant?: 'body' | 'compact'
+}
+type MarkdownTextLike = (props: MarkdownTextProps) => ReactElementLike
 interface SlotRegistryLike {
   inject(name: string, callback: () => () => void): unknown
   register(options: Record<string, unknown>, component: unknown): () => void
@@ -59,8 +78,29 @@ declare const Image: new () => {
 declare const navigator: {
   clipboard?: { writeText(text: string): Promise<void> }
 }
+interface ScriptTagLike {
+  src: string
+  onload: (() => void) | null
+  onerror: (() => void) | null
+}
+interface MermaidApi {
+  initialize(options: Record<string, unknown>): void
+  render(id: string, code: string): Promise<{ readonly svg: string }>
+}
 
 let React: ReactLike
+let MarkdownText: MarkdownTextLike | undefined
+
+/** The host's shared Markdown renderer uses these chrome labels. Keep one
+ *  stable object: its memoization keys on label identity. */
+const MARKDOWN_LABELS: MarkdownLabels = {
+  code: {
+    copyLabel: '复制',
+    copiedLabel: '已复制',
+    toolbarLabels: { codeLabel: '代码', wrapLabel: '自动换行', unwrapLabel: '取消自动换行' },
+  },
+  footnotes: '',
+}
 
 const PANEL_ID = 'dsh-one-assistant'
 
@@ -160,9 +200,8 @@ const CSS = [
   '.one-msg-avatar{flex:none;margin-top:2px}',
   '.one-msg-body{display:flex;flex-direction:column;gap:4px;min-width:0;max-width:82%}',
   '.one-msg-user .one-msg-body{align-items:flex-end}',
-  '.one-bubble{padding:11px 14px;border-radius:15px;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.7;',
-  'border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-top-left-radius:5px}',
-  '.one-msg-user .one-bubble{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 13%,var(--dsw-alias-bg-layer-1));border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,var(--dsw-alias-border-l1));border-top-left-radius:15px;border-top-right-radius:5px}',
+  '.one-bubble{padding:11px 14px;border-radius:15px;border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-top-left-radius:5px;font-size:13px;line-height:1.7}',
+  '.one-msg-user .one-bubble{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 13%,var(--dsw-alias-bg-layer-1));border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,var(--dsw-alias-border-l1));border-top-left-radius:15px;border-top-right-radius:5px;white-space:pre-wrap;word-break:break-word}',
   '.one-msg-system .one-bubble{color:var(--dsw-alias-state-error-primary);font-size:12px;background:transparent;border-style:dashed}',
   '.one-msg-meta{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--dsw-alias-label-secondary);padding:0 4px}',
   '.one-msg-user .one-msg-meta{flex-direction:row-reverse}',
@@ -171,6 +210,11 @@ const CSS = [
   '.one-streaming{white-space:pre-wrap;word-break:break-word}',
   '.one-caret{display:inline-block;width:2px;height:1em;vertical-align:-2px;margin-left:1px;background:var(--dsw-alias-brand-primary);animation:one-caret 1s steps(1) infinite}',
   '@keyframes one-caret{0%,50%{opacity:1}51%,100%{opacity:0}}',
+  '.one-mermaid{margin:10px 0;padding:12px;border-radius:10px;border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);overflow:auto}',
+  '.one-mermaid svg{display:block;max-width:100%;height:auto;margin:0 auto}',
+  '.one-mermaid-loading{font-size:12px;color:var(--dsw-alias-label-secondary);padding:10px 0}',
+  '.one-mermaid-error{display:flex;flex-direction:column;gap:6px;color:var(--dsw-alias-state-error-primary);font-size:12px}',
+  '.one-mermaid-error pre{margin:0;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word;font-size:11px}',
   '.one-tools{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}',
   '.one-tool{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:9px;border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);font-size:12px}',
   '.one-tool-head{display:flex;align-items:center;gap:8px}',
@@ -413,70 +457,143 @@ function clock(at: number): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* Markdown-lite: bold, inline code, code fences, bullets              */
+/* Markdown + Mermaid: the host's MarkdownText is the only renderer.    */
 /* ------------------------------------------------------------------ */
 
-function inline(text: string, key: string): ReactElementLike[] {
-  const nodes: ReactElementLike[] = []
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/gu
-  let last = 0
-  let index = 0
-  for (const match of text.matchAll(pattern)) {
-    const start = match.index ?? 0
-    if (start > last) nodes.push(React.createElement('span', { key: `${key}-t${index}` }, text.slice(last, start)))
-    const token = match[0]
-    if (token.startsWith('**')) {
-      nodes.push(React.createElement('strong', { key: `${key}-b${index}` }, token.slice(2, -2)))
-    } else {
-      nodes.push(React.createElement('code', { key: `${key}-c${index}` }, token.slice(1, -1)))
-    }
-    last = start + token.length
-    index += 1
-  }
-  if (last < text.length) nodes.push(React.createElement('span', { key: `${key}-t${index}` }, text.slice(last)))
-  return nodes
-}
+interface MermaidBlock { readonly kind: 'markdown' | 'mermaid'; readonly text: string }
 
-function renderMarkdown(text: string): ReactElementLike[] {
-  const blocks: ReactElementLike[] = []
+/** Split fenced ```mermaid blocks out of markdown; all other text stays intact. */
+function splitMermaidBlocks(text: string): MermaidBlock[] {
   const lines = text.split('\n')
-  let paragraph: string[] = []
-  let list: string[] = []
-  let code: string[] | undefined
-  let key = 0
-  const flushParagraph = (): void => {
-    if (paragraph.length === 0) return
-    blocks.push(React.createElement('p', { key: `p${key++}` }, ...inline(paragraph.join('\n'), `p${key}`)))
-    paragraph = []
-  }
-  const flushList = (): void => {
-    if (list.length === 0) return
-    blocks.push(React.createElement('ul', { key: `u${key++}` },
-      list.map((item, index) => React.createElement('li', { key: `li${index}` }, ...inline(item, `li${index}`)))))
-    list = []
+  const blocks: MermaidBlock[] = []
+  let markdown: string[] = []
+  let inMermaid = false
+  let fenceChar = '`'
+  let fenceLength = 3
+  let code: string[] = []
+  const flushMarkdown = (): void => {
+    if (markdown.length === 0) return
+    blocks.push({ kind: 'markdown', text: markdown.join('\n') })
+    markdown = []
   }
   for (const line of lines) {
-    if (line.trimStart().startsWith('```')) {
-      if (code === undefined) {
-        flushParagraph()
-        flushList()
+    if (!inMermaid) {
+      const opening = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*([^\s`]*)/u.exec(line)
+      if (opening !== null && opening[2] === 'mermaid') {
+        flushMarkdown()
+        inMermaid = true
+        fenceChar = opening[1]?.[0] ?? '`'
+        fenceLength = opening[1]?.length ?? 3
         code = []
-      } else {
-        blocks.push(React.createElement('pre', { key: `pre${key++}` },
-          React.createElement('code', null, code.join('\n'))))
-        code = undefined
+        continue
       }
+      markdown.push(line)
       continue
     }
-    if (code !== undefined) { code.push(line); continue }
-    if (/^\s*[-*]\s+/u.test(line)) { flushParagraph(); list.push(line.replace(/^\s*[-*]\s+/u, '')); continue }
-    if (line.trim() === '') { flushParagraph(); flushList(); continue }
-    paragraph.push(line)
+    const closing = new RegExp(`^[ \\t]{0,3}${fenceChar === '`' ? '`' : '~'}{${fenceLength},}[ \\t]*$`, 'u')
+    if (closing.test(line)) {
+      blocks.push({ kind: 'mermaid', text: code.join('\n') })
+      inMermaid = false
+      continue
+    }
+    code.push(line)
   }
-  if (code !== undefined) blocks.push(React.createElement('pre', { key: `pre${key++}` }, React.createElement('code', null, code.join('\n'))))
-  flushParagraph()
-  flushList()
-  return blocks.length === 0 ? [React.createElement('p', { key: 'empty' }, text)] : blocks
+  if (inMermaid) return [{ kind: 'markdown', text }]
+  flushMarkdown()
+  return blocks
+}
+
+function markdownText(text: string, streaming: boolean): ReactElementLike {
+  if (MarkdownText !== undefined) {
+    return React.createElement(MarkdownText, { text, streaming, labels: MARKDOWN_LABELS, variant: 'body' })
+  }
+  return React.createElement('div', { className: 'one-md' }, text)
+}
+
+let mermaidLoad: Promise<MermaidApi> | undefined
+let mermaidRenderId = 0
+
+/** Load the locally served mermaid bundle exactly once. */
+function loadMermaid(): Promise<MermaidApi> {
+  const existing = (window as unknown as { mermaid?: MermaidApi }).mermaid
+  if (existing !== undefined) return Promise.resolve(existing)
+  if (mermaidLoad !== undefined) return mermaidLoad
+  mermaidLoad = new Promise<MermaidApi>((resolvePromise, reject) => {
+    const doc = document as unknown as {
+      createElement(tag: string): ScriptTagLike
+      head: { appendChild(node: ScriptTagLike): void }
+    }
+    const script = doc.createElement('script')
+    script.src = '/one/mermaid.js'
+    script.onload = () => {
+      const api = (window as unknown as { mermaid?: MermaidApi }).mermaid
+      if (api === undefined) reject(new Error('mermaid bundle loaded without an export'))
+      else {
+        const body = (document as unknown as { body?: { hasAttribute?: (name: string) => boolean } }).body
+        const dark = body?.hasAttribute?.('data-ds-dark-theme') === true
+        api.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' })
+        resolvePromise(api)
+      }
+    }
+    script.onerror = () => reject(new Error('无法加载 Mermaid 渲染器'))
+    doc.head.appendChild(script)
+  }).catch(error => {
+    mermaidLoad = undefined
+    throw error
+  })
+  return mermaidLoad
+}
+
+interface MermaidState {
+  readonly status: 'loading' | 'ready' | 'error'
+  readonly svg?: string
+  readonly message?: string
+}
+
+/** Render one mermaid fence, falling back to the source when rendering fails. */
+function MermaidDiagram(props: { readonly code: string }): ReactElementLike {
+  const [state, setState] = React.useState<MermaidState>({ status: 'loading' })
+  React.useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const api = await loadMermaid()
+        const id = `one-mermaid-${mermaidRenderId++}`
+        const result = await api.render(id, props.code)
+        if (!cancelled) setState({ status: 'ready', svg: result.svg })
+      } catch (error: unknown) {
+        if (!cancelled) setState({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [props.code])
+  if (state.status === 'ready' && state.svg !== undefined) {
+    return React.createElement('div', {
+      className: 'one-mermaid',
+      dangerouslySetInnerHTML: { __html: state.svg },
+    })
+  }
+  if (state.status === 'error') {
+    return React.createElement('div', { className: 'one-mermaid-error' }, [
+      React.createElement('div', { key: 'm' }, `图表渲染失败：${state.message ?? '未知错误'}`),
+      React.createElement('pre', { key: 'p' }, props.code),
+    ])
+  }
+  return React.createElement('div', { className: 'one-mermaid-loading' }, '正在渲染图表…')
+}
+
+/** The host Markdown renderer, with fenced Mermaid diagrams swapped in after streaming. */
+function RichMarkdown(props: { readonly text: string; readonly streaming: boolean }): ReactElementLike {
+  const blocks = props.streaming ? undefined : splitMermaidBlocks(props.text)
+  if (blocks === undefined || !blocks.some(block => block.kind === 'mermaid')) {
+    return markdownText(props.text, props.streaming)
+  }
+  return React.createElement('div', { className: 'one-md' }, blocks.map((block, index) =>
+    block.kind === 'mermaid'
+      ? React.createElement(MermaidDiagram, { key: `m${index}`, code: block.text })
+      : React.createElement(MarkdownText as MarkdownTextLike, {
+        key: `t${index}`, text: block.text, labels: MARKDOWN_LABELS, variant: 'body',
+      })))
 }
 
 /* ------------------------------------------------------------------ */
@@ -512,18 +629,12 @@ function usePoll<T>(path: string, intervalMs: number): PollState<T> {
 
 function AssistantApp(): ReactElementLike {
   const [tab, setTab] = React.useState<'chat' | 'work' | 'settings'>('chat')
-  const [chatKey, setChatKey] = React.useState(0)
   const overview = usePoll<Overview>('/one/api/overview', 8_000)
   const identityView = useIdentity()
   const data = overview.data
   const name = data?.displayName ?? identityView.name
   const avatar = data?.avatar ?? identityView.avatar
   const open = data?.tickets.open ?? 0
-
-  const newChat = async (): Promise<void> => {
-    await jsonPost('/one/api/chat/clear', {})
-    setChatKey(previous => previous + 1)
-  }
 
   const tabs = React.createElement('div', { className: 'one-tabs' }, [
     React.createElement('button', { key: 'c', type: 'button', className: `one-tab${tab === 'chat' ? ' one-tab-active' : ''}`, onClick: () => setTab('chat') }, '对话'),
@@ -532,7 +643,7 @@ function AssistantApp(): ReactElementLike {
   ])
 
   const body = tab === 'chat'
-    ? React.createElement(ChatView, { key: `chat-${chatKey}`, name, avatar })
+    ? React.createElement(ChatView, { key: 'chat', name, avatar })
     : tab === 'work'
       ? React.createElement(WorkView, { key: 'work' })
       : React.createElement(SettingsView, { key: 'settings' })
@@ -550,9 +661,6 @@ function AssistantApp(): ReactElementLike {
       ]),
       React.createElement('div', { key: 'sp', className: 'one-head-spacer' }),
       React.createElement('div', { key: 'actions', className: 'one-head-actions' }, [
-        React.createElement('button', {
-          key: 'new', type: 'button', className: 'one-ghost', onClick: () => { void newChat() }, title: '清空当前对话，重新开始',
-        }, '新对话'),
         tabs,
       ]),
     ]),
@@ -572,22 +680,9 @@ function statusLabel(status: ChatRow['status']): string {
   }
 }
 
-/** Reveal a still-generating answer character by character, like typing. */
+/** Render one answer through the host Markdown renderer (with Mermaid, when present). */
 function StreamingBubble(props: { readonly text: string; readonly streaming: boolean }): ReactElementLike {
-  const [shown, setShown] = React.useState(0)
-  const target = props.text.length
-  React.useEffect(() => {
-    if (!props.streaming) { setShown(props.text.length); return }
-    if (shown >= target) return
-    const step = Math.max(1, Math.ceil((target - shown) / 14))
-    const timer = setTimeout(() => setShown(Math.min(target, shown + step)), 22)
-    return () => clearTimeout(timer)
-  }, [shown, target, props.streaming])
-  if (!props.streaming) return React.createElement('div', { className: 'one-md' }, ...renderMarkdown(props.text))
-  const partial = [...props.text].slice(0, shown).join('')
-  return React.createElement('span', { className: 'one-streaming' },
-    partial,
-    React.createElement('span', { key: 'caret', className: 'one-caret' }))
+  return React.createElement(RichMarkdown, { text: props.text, streaming: props.streaming })
 }
 
 function toolStatusLabel(status: ChatToolCall['status']): string {
@@ -986,6 +1081,8 @@ window.__ModuleLoader__.load({
   id: 'dsh-one',
   factory(require) {
     React = require('react') as ReactLike
+    const primitives = require('@deepseek-ai/dsh-client-ui-primitives') as { MarkdownText?: MarkdownTextLike }
+    MarkdownText = primitives.MarkdownText
     const inject = ['slots']
 
     function apply(ctx: ClientContextLike): void {

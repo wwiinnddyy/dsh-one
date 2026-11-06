@@ -37,6 +37,9 @@ function loadClient() {
   assert.equal(registered.id, 'dsh-one')
   const factory = registered.factory(name => {
     if (name === 'react') return React
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') {
+      return { MarkdownText: props => ({ type: 'div', props: { ...props }, children: [] }) }
+    }
     throw new Error(`unexpected require: ${name}`)
   })
   return { module: factory, React, styles }
@@ -131,6 +134,21 @@ test('the chat bubble renders tool calls and their result cards', () => {
   assert.match(source, /one-tools/u)
   assert.match(source, /one-tool-status/u)
   assert.match(source, /toolCalls/u)
+})
+
+test('the assistant page uses the host MarkdownText primitive and supports mermaid fences', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.match(source, /@deepseek-ai\/dsh-client-ui-primitives/u)
+  assert.match(source, /MarkdownText/u)
+  assert.match(source, /splitMermaidBlocks/u)
+  assert.match(source, /one-mermaid/u)
+  assert.doesNotMatch(source, /function renderMarkdown\(/u)
+})
+
+test('the assistant page has no new-conversation control or clear route', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /新对话/u)
+  assert.doesNotMatch(source, /chat\/clear/u)
 })
 
 test('every registered surface renders without throwing', () => {

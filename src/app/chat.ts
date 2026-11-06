@@ -220,15 +220,6 @@ export class AssistantChat {
     return { ok: true }
   }
 
-  /** Start a fresh conversation: drop every row, then seed the welcome line. */
-  async clear(): Promise<void> {
-    this.queue.length = 0
-    this.active?.controller.abort()
-    if (this.active !== undefined) this.recalled.add(this.active.userMessageId)
-    for (const row of this.store.listChat(10_000)) await this.store.deleteChat(row.id)
-    await this.ensureWelcome()
-  }
-
   /** A short status line for the page header. */
   status(): {
     readonly openTickets: number

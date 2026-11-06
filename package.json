@@ -33,7 +33,7 @@
   },
   "scripts": {
     "clean": "node scripts/clean-lib.mjs",
-    "build": "npm run clean && tsc -p tsconfig.json && node scripts/finish-client.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/finish-client.mjs && node scripts/copy-mermaid.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs"
   },
@@ -46,7 +46,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-sidebar-right",
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-primitives"
       ]
     }
   },
@@ -56,6 +57,7 @@
   "devDependencies": {
     "@deepseek-ai/schemastery": "^3.18.5",
     "@types/node": "^24.0.0",
+    "mermaid": "^11.17.2",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

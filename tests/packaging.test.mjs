@@ -28,6 +28,7 @@ test('the build produced the host entry, the client bundle and types', () => {
   assert.equal(existsSync(new URL('../lib/types/index.d.ts', import.meta.url)), true)
   assert.equal(existsSync(new URL('../lib/core/engine.js', import.meta.url)), true)
   assert.equal(existsSync(new URL('../lib/client.js', import.meta.url)), true)
+  assert.equal(existsSync(new URL('../lib/mermaid.min.js', import.meta.url)), true)
   assert.equal(existsSync(new URL('../lib/types/client.d.ts', import.meta.url)), true)
 })
 
@@ -38,6 +39,7 @@ test('the client manifest lists only packages this DSH release ships', () => {
     '@deepseek-ai/dsh-client-ui-layout',
     '@deepseek-ai/dsh-client-ui-sidebar-right',
     '@deepseek-ai/dsh-client-ui-conversation',
+    '@deepseek-ai/dsh-client-ui-primitives',
   ])
   assert.equal(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-slots'), false)
 })

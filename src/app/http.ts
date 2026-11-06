@@ -13,6 +13,7 @@ import type {
   HttpResponseLike,
   WebServerLike,
 } from '../types.js'
+import { readFileSync } from 'node:fs'
 import type { OneRuntime } from './runtime.js'
 import { stageOf } from '../core/stage.js'
 import { workspaceKey, workspaceLabel } from './paths.js'
@@ -23,8 +24,8 @@ export function registerPanelApi(ctx: DshContextLike, runtime: OneRuntime): () =
   const disposers = [
     server.register({ kind: 'exact', path: '/one/api/overview', handler: (req, res) => guard(ctx, req, res, () => overview(runtime, res)) }),
     server.register({ kind: 'exact', path: '/one/api/chat', handler: (req, res) => guard(ctx, req, res, () => chat(runtime, req, res)) }),
-    server.register({ kind: 'exact', path: '/one/api/chat/clear', handler: (req, res) => guard(ctx, req, res, () => clearChat(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/chat/recall', handler: (req, res) => guard(ctx, req, res, () => recallChat(runtime, req, res)) }),
+    server.register({ kind: 'exact', path: '/one/mermaid.js', handler: (req, res) => guard(ctx, req, res, () => mermaidAsset(res)) }),
     server.register({ kind: 'exact', path: '/one/api/settings/avatar', handler: (req, res) => guard(ctx, req, res, () => avatar(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/tickets', handler: (req, res) => guard(ctx, req, res, () => tickets(runtime, res)) }),
     server.register({ kind: 'exact', path: '/one/api/tickets/stop', handler: (req, res) => guard(ctx, req, res, () => stopTicket(runtime, req, res)) }),
@@ -179,15 +180,22 @@ async function recallChat(runtime: OneRuntime, req: HttpRequestLike, res: HttpRe
   }
 }
 
-/** Drop the transcript and start a fresh conversation. */
-async function clearChat(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
-  if ((req.method ?? 'GET').toUpperCase() !== 'POST') return json(res, 405, { error: 'method not allowed' })
-  try {
-    await runtime.chat.clear()
-    json(res, 200, { ok: true })
-  } catch (error: unknown) {
-    json(res, 400, { error: error instanceof Error ? error.message : String(error) })
+/** The lazy Mermaid renderer bundle; the assistant page owns no session, so it is a same-origin static asset. */
+let mermaidScript: string | undefined
+function mermaidAsset(res: HttpResponseLike): void {
+  if (mermaidScript === undefined) {
+    try {
+      mermaidScript = readFileSync(new URL('../mermaid.min.js', import.meta.url), 'utf8')
+    } catch {
+      return json(res, 404, { error: 'mermaid asset is not built' })
+    }
   }
+  res.writeHead(200, {
+    'content-type': 'text/javascript; charset=utf-8',
+    'cache-control': 'public, max-age=86400',
+    'content-length': String(Buffer.byteLength(mermaidScript)),
+  })
+  res.end(mermaidScript)
 }
 
 /** Upload or clear the assistant avatar. Kept as POST so a data URL never rides a query string. */
