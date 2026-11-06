@@ -15,6 +15,7 @@ import { SessionService } from './sessions.js'
 import { SettingsService } from './settings.js'
 import { WorkspaceService } from './workspace.js'
 import { AssistantChat } from './chat.js'
+import { ToolRegistry } from './tool-registry.js'
 
 export class OneRuntime {
   readonly ctx: DshContextLike
@@ -26,6 +27,7 @@ export class OneRuntime {
   readonly workspace: WorkspaceService
   readonly settings: SettingsService
   readonly executor: Executor
+  readonly toolRegistry: ToolRegistry
   readonly chat: AssistantChat
 
   constructor(ctx: DshContextLike, config: OneConfig, store: Store) {
@@ -38,6 +40,7 @@ export class OneRuntime {
     this.workspace = new WorkspaceService(ctx, config)
     this.settings = new SettingsService(store, config)
     this.executor = new Executor(ctx, config, store, this.engine, this.effects, this.sessions)
+    this.toolRegistry = new ToolRegistry()
     this.chat = new AssistantChat(this)
   }
 

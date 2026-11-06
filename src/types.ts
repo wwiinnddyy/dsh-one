@@ -29,10 +29,13 @@ export interface ToolRunContextLike {
   readonly signal: AbortSignal
 }
 
-export interface ToolDefinitionLike {
+export interface ToolSchemaLike {
   readonly name: string
   readonly description: string
   readonly parameters: Record<string, unknown>
+}
+
+export interface ToolDefinitionLike extends ToolSchemaLike {
   readonly timeoutMs?: number
   readonly output: {
     readonly schema: Record<string, unknown>

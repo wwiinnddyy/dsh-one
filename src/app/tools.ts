@@ -14,6 +14,7 @@ import { senderLabelFor } from './sender.js'
 import type { OneRuntime } from './runtime.js'
 import type { ManagedSessionRecord } from './store.js'
 import { workspaceKey, workspaceLabel } from './paths.js'
+import { ASSISTANT_ACTOR_ID } from './tool-registry.js'
 
 const ticketProperties = {
   ticketId: { type: 'string' },
@@ -38,10 +39,12 @@ const workOutput = {
   additionalProperties: false,
   properties: {
     ...ticketProperties,
+    action: { type: 'string' },
     path: { type: 'string' },
     workspaceId: { type: 'string' },
     sessionId: { type: 'string' },
     goalId: { type: 'string' },
+    title: { type: 'string' },
     sent: { type: 'boolean' },
   },
   required: [],
@@ -140,12 +143,12 @@ const statusOutput = {
   required: ['total', 'open', 'ended', 'byStage'],
 } as const
 
-/** Register the two model-facing tools. */
+/** Register the two model-facing tools on the Host and in the assistant's own registry. */
 export function registerOneTools(ctx: DshContextLike, runtime: OneRuntime): () => void {
-  const disposers = [
-    ctx.tools.register(workTool(runtime)),
-    ctx.tools.register(statusTool(runtime)),
-  ]
+  const disposers = [workTool(runtime), statusTool(runtime)].flatMap(definition => [
+    runtime.toolRegistry.register(definition),
+    ctx.tools.register(definition),
+  ])
   return () => {
     for (const dispose of disposers.reverse()) dispose()
   }
@@ -167,6 +170,7 @@ function toJson(ticket: Ticket): Record<string, unknown> {
 
 function isAssistant(runtime: OneRuntime, agent: AgentLike | undefined): boolean {
   const assistant = runtime.assistantSessionId()
+  if (agent?.id === ASSISTANT_ACTOR_ID) return true
   return assistant !== undefined && agent?.id === assistant
 }
 

@@ -174,3 +174,107 @@ test('a new conversation clears the transcript and reseeds the welcome line', as
     await env.dispose()
   }
 })
+
+test('the model receives the plugin tools and a tool call is executed before the final answer', async () => {
+  const llm = {
+    calls: [],
+    async *stream(options) {
+      this.calls.push(options)
+      if (this.calls.length === 1) {
+        yield { type: 'text-delta', index: 0, text: '我先查一下。' }
+        yield { type: 'tool-call-delta', index: 1, id: 'call-status-1', name: 'one_status', argumentsDelta: '{}' }
+        yield { type: 'finish', reason: { kind: 'tool-calls' } }
+        return
+      }
+      yield { type: 'text-delta', index: 0, text: '目前没有工单。' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const env = await createEnv({ llm })
+  try {
+    const sent = (await request(env, '/one/api/chat?send=' + encodeURIComponent('看看工单'))).json()
+    assert.equal(sent.status, 'sending')
+    await wait(120)
+    assert.equal(llm.calls.length, 2)
+    const names = llm.calls[0].tools.map(tool => tool.name)
+    assert.deepEqual(names.sort(), ['one_status', 'one_work'])
+    const second = llm.calls[1].messages
+    const assistant = second.find(message => message.role === 'assistant' && message.content.some(block => block.type === 'tool-call'))
+    assert.ok(assistant, 'the assistant tool-call turn is replayed to the model')
+    const callBlock = assistant.content.find(block => block.type === 'tool-call')
+    assert.equal(callBlock.name, 'one_status')
+    const toolResult = second.find(message => message.role === 'tool')
+    assert.equal(toolResult.toolCallId, 'call-status-1')
+    assert.match(toolResult.content[0].text, /"total"/u)
+    const list = (await request(env, '/one/api/chat')).json()
+    const toolRow = list.items.find(item => item.role === 'assistant' && Array.isArray(item.toolCalls) && item.toolCalls.length > 0)
+    assert.ok(toolRow, 'the tool-call row is visible in the transcript')
+    assert.equal(toolRow.toolCalls[0].name, 'one_status')
+    assert.equal(toolRow.toolCalls[0].status, 'ok')
+    assert.match(toolRow.toolCalls[0].result, /"total"/u)
+    const final = [...list.items].reverse().find(item => item.role === 'assistant')
+    assert.equal(final.text, '目前没有工单。')
+    const user = [...list.items].reverse().find(item => item.role === 'user')
+    assert.equal(user.status, 'replied')
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('an unknown tool call becomes a visible error result instead of a silent hang', async () => {
+  let turn = 0
+  const llm = {
+    async *stream() {
+      turn += 1
+      if (turn === 1) {
+        yield { type: 'tool-call-delta', index: 0, id: 'call-bad-1', name: 'not_a_tool', argumentsDelta: '{}' }
+        return
+      }
+      yield { type: 'text-delta', index: 0, text: '工具不可用，我直接回答。' }
+    },
+  }
+  const env = await createEnv({ llm })
+  try {
+    await request(env, '/one/api/chat?send=' + encodeURIComponent('试试'))
+    await wait(120)
+    const list = (await request(env, '/one/api/chat')).json()
+    const row = list.items.find(item => item.role === 'assistant' && Array.isArray(item.toolCalls) && item.toolCalls.length > 0)
+    assert.ok(row)
+    assert.equal(row.toolCalls[0].status, 'error')
+    assert.match(row.toolCalls[0].error, /未知工具/u)
+    const final = list.items.find(item => item.role === 'assistant' && item.text === '工具不可用，我直接回答。')
+    assert.ok(final, 'the final answer follows the failed tool call')
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('one_work runs from the assistant page and creates a real ticket', async () => {
+  let turn = 0
+  const llm = {
+    async *stream() {
+      turn += 1
+      if (turn === 1) {
+        yield { type: 'tool-call-delta', index: 0, id: 'call-work-1', name: 'one_work', argumentsDelta: '{"action":"create","title":"测试工单","goal":"验证助手页工具调用"}' }
+        return
+      }
+      yield { type: 'text-delta', index: 0, text: '已经建好工单。' }
+    },
+  }
+  const env = await createEnv({ llm })
+  try {
+    await request(env, '/one/api/chat?send=' + encodeURIComponent('建一个测试工单'))
+    await wait(120)
+    const tickets = env.runtime.engine.list()
+    assert.equal(tickets.length, 1)
+    assert.equal(tickets[0].title, '测试工单')
+    assert.equal(tickets[0].origin, 'assistant')
+    const list = (await request(env, '/one/api/chat')).json()
+    const row = list.items.find(item => item.role === 'assistant' && Array.isArray(item.toolCalls) && item.toolCalls.length > 0)
+    assert.equal(row.toolCalls[0].name, 'one_work')
+    assert.equal(row.toolCalls[0].status, 'ok')
+    assert.match(row.toolCalls[0].result, /"ticketId"/u)
+  } finally {
+    await env.dispose()
+  }
+})

@@ -148,6 +148,15 @@ export const auditSchema = z.object({
   detail: z.string().optional(),
 })
 
+const chatToolCallSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  arguments: z.string(),
+  status: z.enum(['running', 'ok', 'error']),
+  result: z.string().optional(),
+  error: z.string().optional(),
+})
+
 /** One row of the assistant's own conversation, shown only in the assistant page. */
 export const chatSchema = z.object({
   id: z.string(),
@@ -158,6 +167,7 @@ export const chatSchema = z.object({
   replyTo: z.string().optional(),
   requestId: z.string().optional(),
   sessionSeq: nonNegative.optional(),
+  toolCalls: z.array(chatToolCallSchema).optional(),
 })
 
 export const oneDomainSpec = defineDomain({

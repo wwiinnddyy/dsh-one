@@ -171,6 +171,19 @@ const CSS = [
   '.one-streaming{white-space:pre-wrap;word-break:break-word}',
   '.one-caret{display:inline-block;width:2px;height:1em;vertical-align:-2px;margin-left:1px;background:var(--dsw-alias-brand-primary);animation:one-caret 1s steps(1) infinite}',
   '@keyframes one-caret{0%,50%{opacity:1}51%,100%{opacity:0}}',
+  '.one-tools{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}',
+  '.one-tool{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:9px;border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);font-size:12px}',
+  '.one-tool-head{display:flex;align-items:center;gap:8px}',
+  '.one-tool-dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--dsw-alias-label-secondary)}',
+  '.one-tool-running .one-tool-dot{background:var(--dsw-alias-brand-primary);animation:one-pulse 1s infinite}',
+  '.one-tool-ok .one-tool-dot{background:var(--dsw-alias-state-success-primary,var(--dsw-alias-label-secondary))}',
+  '.one-tool-error .one-tool-dot{background:var(--dsw-alias-state-error-primary)}',
+  '.one-tool-name{font-weight:600;font-size:12px}',
+  '.one-tool-status{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-secondary)}',
+  '.one-tool details{font-size:11px;color:var(--dsw-alias-label-secondary)}',
+  '.one-tool summary{cursor:pointer;user-select:none}',
+  '.one-tool pre{margin:4px 0 0;padding:6px 8px;border-radius:6px;background:var(--dsw-alias-bg-base);white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto;font-size:11px}',
+  '@keyframes one-pulse{0%,100%{opacity:.35}50%{opacity:1}}',
   '.one-bubble p{margin:0 0 8px}',
   '.one-bubble p:last-child{margin-bottom:0}',
   '.one-bubble ul{margin:4px 0 8px;padding-left:20px}',
@@ -298,6 +311,14 @@ interface Overview {
   readonly workspaces: readonly { readonly path: string; readonly label: string; readonly sessions: number }[]
   readonly sessions: readonly { readonly sessionId: string; readonly running: boolean }[]
 }
+interface ChatToolCall {
+  readonly id: string
+  readonly name: string
+  readonly arguments: string
+  readonly status: 'running' | 'ok' | 'error'
+  readonly result?: string
+  readonly error?: string
+}
 interface ChatRow {
   readonly id: string
   readonly role: 'user' | 'assistant' | 'system'
@@ -305,6 +326,7 @@ interface ChatRow {
   readonly at: number
   readonly status?: 'sending' | 'delivered' | 'read' | 'replied' | 'waiting' | 'failed'
   readonly replyTo?: string
+  readonly toolCalls?: readonly ChatToolCall[]
 }
 interface ChatStatus {
   readonly openTickets: number
@@ -344,6 +366,7 @@ function Avatar(props: {
 }): ReactElementLike {
   if (props.variant === 'user') {
     return React.createElement('div', {
+      key: props.key,
       className: 'one-avatar',
       style: {
         width: `${props.size}px`, height: `${props.size}px`, fontSize: `${Math.round(props.size * 0.4)}px`,
@@ -354,12 +377,14 @@ function Avatar(props: {
   }
   if (props.avatar !== undefined && props.avatar !== null && props.avatar !== '') {
     return React.createElement('div', {
+      key: props.key,
       className: 'one-avatar',
       style: { width: `${props.size}px`, height: `${props.size}px`, background: 'var(--dsw-alias-bg-layer-2)' },
     }, React.createElement('img', { className: 'one-avatar-img', src: props.avatar, alt: props.name }))
   }
   const hue = hueOf(props.name)
   return React.createElement('div', {
+    key: props.key,
     className: 'one-avatar',
     style: {
       width: `${props.size}px`, height: `${props.size}px`, fontSize: `${Math.round(props.size * 0.38)}px`,
@@ -550,7 +575,7 @@ function statusLabel(status: ChatRow['status']): string {
 /** Reveal a still-generating answer character by character, like typing. */
 function StreamingBubble(props: { readonly text: string; readonly streaming: boolean }): ReactElementLike {
   const [shown, setShown] = React.useState(0)
-  const target = props.streaming ? props.text.length : props.text.length
+  const target = props.text.length
   React.useEffect(() => {
     if (!props.streaming) { setShown(props.text.length); return }
     if (shown >= target) return
@@ -563,6 +588,36 @@ function StreamingBubble(props: { readonly text: string; readonly streaming: boo
   return React.createElement('span', { className: 'one-streaming' },
     partial,
     React.createElement('span', { key: 'caret', className: 'one-caret' }))
+}
+
+function toolStatusLabel(status: ChatToolCall['status']): string {
+  switch (status) {
+    case 'running': return '执行中…'
+    case 'ok': return '已完成'
+    case 'error': return '失败'
+    default: return ''
+  }
+}
+
+/** Render model tool calls as compact cards above the answer text. */
+function ToolCallList(props: { readonly calls: readonly ChatToolCall[] }): ReactElementLike {
+  return React.createElement('div', { className: 'one-tools' }, props.calls.map(call =>
+    React.createElement('div', { key: call.id, className: `one-tool one-tool-${call.status}` }, [
+      React.createElement('div', { key: 'h', className: 'one-tool-head' }, [
+        React.createElement('span', { key: 'd', className: 'one-tool-dot' }),
+        React.createElement('span', { key: 'n', className: 'one-tool-name' }, call.name),
+        React.createElement('span', { key: 's', className: 'one-tool-status' }, toolStatusLabel(call.status)),
+      ]),
+      ...(call.arguments.trim() === '' ? [] : [React.createElement('details', { key: 'a' }, [
+        React.createElement('summary', { key: 's' }, '参数'),
+        React.createElement('pre', { key: 'p' }, call.arguments),
+      ])]),
+      ...(call.result === undefined || call.result === '' ? [] : [React.createElement('details', { key: 'r' }, [
+        React.createElement('summary', { key: 's' }, '结果'),
+        React.createElement('pre', { key: 'p' }, call.result),
+      ])]),
+      ...(call.error === undefined ? [] : [React.createElement('div', { key: 'e', className: 'one-error' }, call.error)]),
+    ])))
 }
 
 function ChatView(props: { readonly name: string; readonly avatar: string | null }): ReactElementLike {
@@ -635,7 +690,7 @@ function ChatView(props: { readonly name: string; readonly avatar: string | null
   }
 
   const streamingRow = [...rows].reverse().find(row => row.role === 'assistant' && row.status === 'sending' && row.text.length > 0)
-  const visible = rows.filter(row => !(row.role === 'assistant' && row.text === ''))
+  const visible = rows.filter(row => !(row.role === 'assistant' && row.text === '' && (row.toolCalls?.length ?? 0) === 0))
   const pending = [...rows].reverse().find(row => row.role === 'user'
     && (row.status === 'waiting' || row.status === 'delivered' || row.status === 'read'))
   const showSuggestions = visible.length <= 1 && state?.busy !== true
@@ -649,10 +704,16 @@ function ChatView(props: { readonly name: string; readonly avatar: string | null
             ? Avatar({ key: 'a', name: '我', size: 26, variant: 'user' })
             : Avatar({ key: 'a', name: props.name, avatar: props.avatar, size: 26 }),
           React.createElement('div', { key: 'b', className: 'one-msg-body' }, [
-            React.createElement('div', { key: 'x', className: 'one-bubble' },
+            React.createElement('div', { key: 'x', className: 'one-bubble' }, [
+              ...(row.toolCalls === undefined || row.toolCalls.length === 0
+                ? []
+                : [React.createElement(ToolCallList, { key: 'tools', calls: row.toolCalls })]),
               ...(row.role === 'assistant'
-                ? [StreamingBubble({ text: row.text, streaming: row.status === 'sending' })]
-                : [row.text])),
+                ? (row.text === ''
+                  ? []
+                  : [React.createElement(StreamingBubble, { key: 'text', text: row.text, streaming: row.status === 'sending' })])
+                : [React.createElement('span', { key: 'text' }, row.text)]),
+            ]),
             React.createElement('div', { key: 'm', className: 'one-msg-meta' }, [
               React.createElement('span', { key: 't' }, clock(row.at)),
               ...(row.role === 'user'

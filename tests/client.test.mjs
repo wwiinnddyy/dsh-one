@@ -114,6 +114,25 @@ test('the client does not register a floating overlay', () => {
   assert.ok(!source.includes('position:fixed'))
 })
 
+test('hook-bearing components are mounted through React.createElement, never called as plain functions', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  // A function component that calls useState/useEffect must be rendered by
+  // React. Calling it directly would attribute its hooks to the call-site
+  // component and throw "Rendered more hooks than during the previous render"
+  // as soon as the row list grows.
+  assert.match(source, /React\.createElement\(StreamingBubble,/u)
+  assert.doesNotMatch(source, /StreamingBubble\(\{/u)
+  assert.match(source, /React\.createElement\(ToolCallList,/u)
+  assert.doesNotMatch(source, /ToolCallList\(\{/u)
+})
+
+test('the chat bubble renders tool calls and their result cards', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.match(source, /one-tools/u)
+  assert.match(source, /one-tool-status/u)
+  assert.match(source, /toolCalls/u)
+})
+
 test('every registered surface renders without throwing', () => {
   const { registrations } = applyModule()
   for (const entry of registrations) {

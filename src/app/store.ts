@@ -45,6 +45,17 @@ export interface AuditRecord {
   readonly detail?: string
 }
 
+/** One tool call made by the assistant during a model turn. */
+export interface ChatToolCall {
+  readonly id: string
+  readonly name: string
+  readonly arguments: string
+  readonly status: 'running' | 'ok' | 'error'
+  /** JSON text of the tool result, kept for the model history and the result card. */
+  readonly result?: string
+  readonly error?: string
+}
+
 /** One row of the assistant's own conversation. */
 export interface ChatRecord {
   readonly id: string
@@ -58,6 +69,8 @@ export interface ChatRecord {
   readonly requestId?: string
   /** The host Session event seq that produced an assistant message, for dedupe. */
   readonly sessionSeq?: number
+  /** Tool calls emitted by the model in this turn, with their execution state. */
+  readonly toolCalls?: readonly ChatToolCall[]
 }
 
 interface TableLike<T> {
@@ -118,7 +131,9 @@ function byAt<T extends { readonly at: number }>(rows: readonly T[]): T[] {
 }
 
 function chatRows<T extends ChatRecord>(rows: readonly T[]): T[] {
-  return [...rows].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))
+  // Stable time order: rows written inside the same millisecond keep insertion
+  // order, so a tool-call turn never jumps behind the answer it produced.
+  return [...rows].sort((a, b) => a.at - b.at)
 }
 
 class MemoryTable<T> {
