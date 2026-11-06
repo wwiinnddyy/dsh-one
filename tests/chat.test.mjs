@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createEnv, makeLlm, makeReq, makeResponse } from './harness.mjs'
 
+const wait = (ms = 80) => new Promise(resolve => setTimeout(resolve, ms))
+
 function request(env, path, options = {}) {
   const routePath = path.split('?')[0]
   const handler = env.webServer.routes.get(routePath)
@@ -30,7 +32,8 @@ test('sending a message calls the host LLM and records both halves', async () =>
     const sent = await request(env, '/one/api/chat?send=' + encodeURIComponent('帮我修一下测试'))
     assert.equal(sent.status, 200)
     assert.equal(sent.json().ok, true)
-    assert.equal(sent.json().reply, '收到，我会拆成工单。')
+    assert.equal(sent.json().status, 'sending')
+    await wait()
     assert.equal(llm.calls.length, 1)
     assert.equal(llm.calls[0].provider, 'p')
     assert.equal(llm.calls[0].model, 'm1')
@@ -38,10 +41,11 @@ test('sending a message calls the host LLM and records both halves', async () =>
     const lastMessage = llm.calls[0].messages.at(-1)
     assert.equal(lastMessage.content[0].text, '帮我修一下测试')
     const list = (await request(env, '/one/api/chat')).json()
-    assert.equal(list.items.at(-2).role, 'user')
-    assert.equal(list.items.at(-1).role, 'assistant')
-    assert.equal(list.items.at(-1).text, '收到，我会拆成工单。')
-    assert.equal(typeof list.status.openTickets, 'number')
+    const user = [...list.items].reverse().find(item => item.role === 'user')
+    assert.equal(user.text, '帮我修一下测试')
+    assert.equal(user.status, 'replied')
+    const assistant = [...list.items].reverse().find(item => item.role === 'assistant')
+    assert.equal(assistant.text, '收到，我会拆成工单。')
   } finally {
     await env.dispose()
   }
@@ -59,15 +63,54 @@ test('the chat route always returns a welcome row even before any message', asyn
   }
 })
 
-test('an llm failure is recorded as a system row, never a silent hang', async () => {
+test('an llm failure is recorded as a failed answer, never a silent hang', async () => {
   const llm = { async *stream() { throw new Error('model offline') } }
   const env = await createEnv({ llm })
   try {
     const sent = await request(env, '/one/api/chat?send=hello')
-    assert.equal(sent.json().error, 'model offline')
+    assert.equal(sent.json().ok, true)
+    await wait()
     const list = (await request(env, '/one/api/chat')).json()
-    assert.equal(list.items.at(-1).role, 'system')
-    assert.match(list.items.at(-1).text, /model offline/u)
+    const assistant = [...list.items].reverse().find(item => item.role === 'assistant')
+    assert.equal(assistant.status, 'failed')
+    assert.match(assistant.text, /model offline/u)
+    const user = [...list.items].reverse().find(item => item.role === 'user')
+    assert.equal(user.status, 'failed')
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('a replied message is still recallable inside the five-second window', async () => {
+  const env = await createEnv()
+  try {
+    const sent = (await request(env, '/one/api/chat?send=already-done')).json()
+    await wait()
+    const recalled = await request(env, '/one/api/chat/recall', {
+      method: 'POST', body: JSON.stringify({ messageId: sent.id }),
+    })
+    assert.equal(recalled.status, 200)
+    const list = (await request(env, '/one/api/chat')).json()
+    assert.equal(list.items.some(item => item.id === sent.id), false)
+    assert.equal(list.items.some(item => item.replyTo === sent.id), false)
+  } finally {
+    await env.dispose()
+  }
+})
+
+test('a message can be recalled within five seconds', async () => {
+  // A generator that never yields keeps the answer in flight long enough to recall.
+  const llm = { async *stream() { await new Promise(() => {}); yield { type: 'text-delta', text: 'never' } } }
+  const env = await createEnv({ llm })
+  try {
+    const sent = (await request(env, '/one/api/chat?send=recall-me')).json()
+    await wait(20)
+    const recalled = await request(env, '/one/api/chat/recall', {
+      method: 'POST', body: JSON.stringify({ messageId: sent.id }),
+    })
+    assert.equal(recalled.status, 200)
+    const list = (await request(env, '/one/api/chat')).json()
+    assert.equal(list.items.some(item => item.text === 'recall-me'), false)
   } finally {
     await env.dispose()
   }

@@ -24,6 +24,7 @@ export function registerPanelApi(ctx: DshContextLike, runtime: OneRuntime): () =
     server.register({ kind: 'exact', path: '/one/api/overview', handler: (req, res) => guard(ctx, req, res, () => overview(runtime, res)) }),
     server.register({ kind: 'exact', path: '/one/api/chat', handler: (req, res) => guard(ctx, req, res, () => chat(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/chat/clear', handler: (req, res) => guard(ctx, req, res, () => clearChat(runtime, req, res)) }),
+    server.register({ kind: 'exact', path: '/one/api/chat/recall', handler: (req, res) => guard(ctx, req, res, () => recallChat(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/settings/avatar', handler: (req, res) => guard(ctx, req, res, () => avatar(runtime, req, res)) }),
     server.register({ kind: 'exact', path: '/one/api/tickets', handler: (req, res) => guard(ctx, req, res, () => tickets(runtime, res)) }),
     server.register({ kind: 'exact', path: '/one/api/tickets/stop', handler: (req, res) => guard(ctx, req, res, () => stopTicket(runtime, req, res)) }),
@@ -159,6 +160,20 @@ async function chat(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponse
     }
     const limit = Math.max(1, Math.min(500, Number(query.get('limit') ?? 200) || 200))
     json(res, 200, { items: runtime.chat.list(limit), status: runtime.chat.status() })
+  } catch (error: unknown) {
+    json(res, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+/** Withdraw a just-sent message inside its five-second window. */
+async function recallChat(runtime: OneRuntime, req: HttpRequestLike, res: HttpResponseLike): Promise<void> {
+  if ((req.method ?? 'GET').toUpperCase() !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  try {
+    const body = parseBody(await readBody(req))
+    const messageId = typeof body['messageId'] === 'string' ? body['messageId'] : undefined
+    if (messageId === undefined) return json(res, 400, { error: 'messageId is required' })
+    await runtime.chat.recall(messageId)
+    json(res, 200, { ok: true })
   } catch (error: unknown) {
     json(res, 400, { error: error instanceof Error ? error.message : String(error) })
   }

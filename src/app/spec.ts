@@ -154,6 +154,9 @@ export const chatSchema = z.object({
   role: z.enum(['user', 'assistant', 'system']),
   text: z.string(),
   at: nonNegative,
+  status: z.enum(['sending', 'delivered', 'read', 'replied', 'waiting', 'failed']).optional(),
+  replyTo: z.string().optional(),
+  requestId: z.string().optional(),
   sessionSeq: nonNegative.optional(),
 })
 

@@ -51,6 +51,11 @@ export interface ChatRecord {
   readonly role: 'user' | 'assistant' | 'system'
   readonly text: string
   readonly at: number
+  /** Delivery / processing state for a user row, or the answer state for an assistant row. */
+  readonly status?: 'sending' | 'delivered' | 'read' | 'replied' | 'waiting' | 'failed'
+  /** The user row an assistant answer belongs to, so a recall can remove both. */
+  readonly replyTo?: string
+  readonly requestId?: string
   /** The host Session event seq that produced an assistant message, for dedupe. */
   readonly sessionSeq?: number
 }

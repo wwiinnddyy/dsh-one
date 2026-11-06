@@ -166,6 +166,11 @@ const CSS = [
   '.one-msg-system .one-bubble{color:var(--dsw-alias-state-error-primary);font-size:12px;background:transparent;border-style:dashed}',
   '.one-msg-meta{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--dsw-alias-label-secondary);padding:0 4px}',
   '.one-msg-user .one-msg-meta{flex-direction:row-reverse}',
+  '.one-delivery{opacity:.75}',
+  '.one-processing{font-size:11px;color:var(--dsw-alias-label-secondary);padding:0 2px}',
+  '.one-streaming{white-space:pre-wrap;word-break:break-word}',
+  '.one-caret{display:inline-block;width:2px;height:1em;vertical-align:-2px;margin-left:1px;background:var(--dsw-alias-brand-primary);animation:one-caret 1s steps(1) infinite}',
+  '@keyframes one-caret{0%,50%{opacity:1}51%,100%{opacity:0}}',
   '.one-bubble p{margin:0 0 8px}',
   '.one-bubble p:last-child{margin-bottom:0}',
   '.one-bubble ul{margin:4px 0 8px;padding-left:20px}',
@@ -298,6 +303,16 @@ interface ChatRow {
   readonly role: 'user' | 'assistant' | 'system'
   readonly text: string
   readonly at: number
+  readonly status?: 'sending' | 'delivered' | 'read' | 'replied' | 'waiting' | 'failed'
+  readonly replyTo?: string
+}
+interface ChatStatus {
+  readonly openTickets: number
+  readonly waiting: number
+  readonly backend: string
+  readonly model: string
+  readonly busy: boolean
+  readonly activeMessageId?: string
 }
 interface TicketRow {
   readonly ticketId: string
@@ -520,18 +535,50 @@ function AssistantApp(): ReactElementLike {
   ])
 }
 
+function statusLabel(status: ChatRow['status']): string {
+  switch (status) {
+    case 'sending': return '发送中…'
+    case 'waiting': return '等待助手处理'
+    case 'delivered': return '已送达'
+    case 'read': return '助手已读'
+    case 'replied': return '已回复'
+    case 'failed': return '发送失败'
+    default: return ''
+  }
+}
+
+/** Reveal a still-generating answer character by character, like typing. */
+function StreamingBubble(props: { readonly text: string; readonly streaming: boolean }): ReactElementLike {
+  const [shown, setShown] = React.useState(0)
+  const target = props.streaming ? props.text.length : props.text.length
+  React.useEffect(() => {
+    if (!props.streaming) { setShown(props.text.length); return }
+    if (shown >= target) return
+    const step = Math.max(1, Math.ceil((target - shown) / 14))
+    const timer = setTimeout(() => setShown(Math.min(target, shown + step)), 22)
+    return () => clearTimeout(timer)
+  }, [shown, target, props.streaming])
+  if (!props.streaming) return React.createElement('div', { className: 'one-md' }, ...renderMarkdown(props.text))
+  const partial = [...props.text].slice(0, shown).join('')
+  return React.createElement('span', { className: 'one-streaming' },
+    partial,
+    React.createElement('span', { key: 'caret', className: 'one-caret' }))
+}
+
 function ChatView(props: { readonly name: string; readonly avatar: string | null }): ReactElementLike {
   const [rows, setRows] = React.useState<readonly ChatRow[]>([])
+  const [state, setState] = React.useState<ChatStatus | undefined>(undefined)
   const [draft, setDraft] = React.useState('')
-  const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | undefined>(undefined)
   const [copied, setCopied] = React.useState<string | undefined>(undefined)
+  const [now, setNow] = React.useState(Date.now())
   const scroll = React.useRef<unknown>(undefined)
 
   const load = async (): Promise<void> => {
     try {
-      const value = await jsonFetch('/one/api/chat') as { items: readonly ChatRow[] }
+      const value = await jsonFetch('/one/api/chat') as { items: readonly ChatRow[]; status: ChatStatus }
       setRows(value.items)
+      setState(value.status)
     } catch (failure: unknown) {
       setError(String(failure))
     }
@@ -541,29 +588,40 @@ function ChatView(props: { readonly name: string; readonly avatar: string | null
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       void load()
-    }, 2_000)
+    }, 700)
+    return () => clearInterval(timer)
+  }, [])
+  React.useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 500)
     return () => clearInterval(timer)
   }, [])
   React.useEffect(() => {
     const node = scroll.current as { scrollTop?: number; scrollHeight?: number } | undefined
     if (node !== undefined && typeof node.scrollTop === 'number') node.scrollTop = node.scrollHeight ?? 0
-  }, [rows.length, busy])
+  }, [rows.length, state?.busy])
 
   const sendText = async (text: string): Promise<void> => {
     const clean = text.trim()
-    if (clean === '' || busy) return
-    setBusy(true)
+    if (clean === '') return
     setError(undefined)
     setDraft('')
-    setRows(previous => [...previous, { id: `local-${Date.now()}`, role: 'user', text: clean, at: Date.now() }])
+    setRows(previous => [...previous, {
+      id: `local-${Date.now()}`, role: 'user', text: clean, at: Date.now(), status: 'sending',
+    }])
     try {
       await jsonFetch('/one/api/chat?send=' + encodeURIComponent(clean))
       await load()
     } catch (failure: unknown) {
       setError(String(failure))
       setDraft(clean)
-    } finally {
-      setBusy(false)
+    }
+  }
+  const recall = async (row: ChatRow): Promise<void> => {
+    try {
+      await jsonPost('/one/api/chat/recall', { messageId: row.id })
+      await load()
+    } catch (failure: unknown) {
+      setError(String(failure))
     }
   }
   const copy = async (row: ChatRow): Promise<void> => {
@@ -576,11 +634,15 @@ function ChatView(props: { readonly name: string; readonly avatar: string | null
     }
   }
 
-  const showSuggestions = rows.length <= 1 && !busy
+  const streamingRow = [...rows].reverse().find(row => row.role === 'assistant' && row.status === 'sending' && row.text.length > 0)
+  const visible = rows.filter(row => !(row.role === 'assistant' && row.text === ''))
+  const pending = [...rows].reverse().find(row => row.role === 'user'
+    && (row.status === 'waiting' || row.status === 'delivered' || row.status === 'read'))
+  const showSuggestions = visible.length <= 1 && state?.busy !== true
   return React.createElement('div', { className: 'one-chat-page' },
     React.createElement('div', { className: 'one-chat', ref: scroll as unknown as Record<string, unknown> },
-      React.createElement('div', { className: `one-chat-inner${rows.length <= 1 ? ' one-chat-inner-top' : ''}` }, [
-        ...rows.map(row => React.createElement('div', {
+      React.createElement('div', { className: 'one-chat-inner' }, [
+        ...visible.map(row => React.createElement('div', {
           key: row.id, className: `one-msg one-msg-${row.role}`,
         }, [
           row.role === 'user'
@@ -588,15 +650,26 @@ function ChatView(props: { readonly name: string; readonly avatar: string | null
             : Avatar({ key: 'a', name: props.name, avatar: props.avatar, size: 26 }),
           React.createElement('div', { key: 'b', className: 'one-msg-body' }, [
             React.createElement('div', { key: 'x', className: 'one-bubble' },
-              ...(row.role === 'assistant' ? renderMarkdown(row.text) : [row.text])),
+              ...(row.role === 'assistant'
+                ? [StreamingBubble({ text: row.text, streaming: row.status === 'sending' })]
+                : [row.text])),
             React.createElement('div', { key: 'm', className: 'one-msg-meta' }, [
               React.createElement('span', { key: 't' }, clock(row.at)),
-              ...(row.role === 'assistant'
-                ? [React.createElement('button', {
+              ...(row.role === 'user'
+                ? [
+                  React.createElement('span', { key: 's', className: 'one-delivery' }, statusLabel(row.status)),
+                  ...(row.id.startsWith('local-') || row.status === 'replied' || row.status === 'failed'
+                    ? []
+                    : now - row.at < 5_000
+                      ? [React.createElement('button', {
+                        key: 'r', type: 'button', className: 'one-copy', onClick: () => { void recall(row) },
+                      }, '撤回')]
+                      : []),
+                ]
+                : [React.createElement('button', {
                   key: 'c', type: 'button', className: 'one-copy',
                   onClick: () => { void copy(row) },
-                }, copied === row.id ? '已复制' : '复制')]
-                : []),
+                }, copied === row.id ? '已复制' : '复制')]),
             ]),
           ]),
         ])),
@@ -607,12 +680,17 @@ function ChatView(props: { readonly name: string; readonly avatar: string | null
               onClick: () => { void sendText(text) },
             }, text)),
         ])] : []),
-        ...(busy ? [React.createElement('div', { key: 'typing', className: 'one-msg one-msg-assistant' }, [
+        ...(state?.busy === true ? [React.createElement('div', { key: 'typing', className: 'one-msg one-msg-assistant' }, [
           Avatar({ key: 'a', name: props.name, avatar: props.avatar, size: 26 }),
-          React.createElement('div', { key: 'b', className: 'one-msg-body' },
-            React.createElement('div', { className: 'one-bubble one-typing' }, [
-              React.createElement('span', { key: '1' }), React.createElement('span', { key: '2' }), React.createElement('span', { key: '3' }),
-            ])),
+          React.createElement('div', { key: 'b', className: 'one-msg-body' }, [
+            React.createElement('div', { key: 'l', className: 'one-processing' },
+              pending?.status === 'waiting' ? '等待助手处理' : '助手正在处理中'),
+            ...(streamingRow === undefined
+              ? [React.createElement('div', { key: 't', className: 'one-bubble one-typing' }, [
+                React.createElement('span', { key: '1' }), React.createElement('span', { key: '2' }), React.createElement('span', { key: '3' }),
+              ])]
+              : []),
+          ]),
         ])] : []),
       ])),
     React.createElement('div', { className: 'one-composer' }, [
@@ -628,12 +706,12 @@ function ChatView(props: { readonly name: string; readonly avatar: string | null
           },
         }),
         React.createElement('button', {
-          className: 'one-send', type: 'button', disabled: busy || draft.trim() === '',
+          className: 'one-send', type: 'button', disabled: draft.trim() === '',
           title: '发送', onClick: () => { void sendText(draft) },
         }, React.createElement('svg', { width: 17, height: 17, viewBox: '0 0 16 16', fill: 'none' },
           React.createElement('path', { d: 'M8 13V3M3.5 7.5 8 3l4.5 4.5', stroke: 'currentColor', strokeWidth: '1.6', strokeLinecap: 'round', strokeLinejoin: 'round' }))),
       ]),
-      React.createElement('p', { className: 'one-hint' }, 'Enter 发送 · Shift+Enter 换行 · 不需要选择工作区'),
+      React.createElement('p', { className: 'one-hint' }, 'Enter 发送 · Shift+Enter 换行 · 发送后 5 秒内可撤回'),
     ]),
     ...(error === undefined ? [] : [React.createElement('div', { key: 'e', className: 'one-error' }, error)]),
   )
